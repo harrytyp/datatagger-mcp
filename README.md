@@ -1,15 +1,43 @@
 # Data Tagger MCP Server
 
-A Model Context Protocol (MCP) server for interacting with the Data Tagger API. This server enables LLM clients (like Claude for Desktop) to directly list and search projects and folders within Data Tagger.
+A comprehensive Model Context Protocol (MCP) server for interacting with the Data Tagger API. This server enables LLM clients (like Claude for Desktop) to directly interface with Data Tagger—allowing for powerful autonomous workflows including bulk uploads, metadata tagging, and permissions management.
 
 ## Features
 
-This server exposes the following tools to your MCP client:
-- `list_projects`: List all accessible Data Tagger projects.
-- `get_project`: Retrieve details of a specific project by UUID.
-- `list_folders`: List all Data Tagger folders (can be filtered by project ID).
-- `get_folder`: Retrieve details of a specific folder by UUID.
+This server exposes 20+ specialized tools to your MCP client, logically grouped below:
+
+### Search & Read
 - `search_datatagger`: Perform a global search across folders, projects, and uploads.
+- `list_projects` / `get_project`: Retrieve available projects.
+- `list_folders` / `get_folder`: Retrieve available folders.
+- `list_datasets`: Retrieve dataset entries inside folders.
+
+### Creation & Modification
+- `create_project` / `update_project`
+- `create_folder` / `update_folder`
+- `create_dataset` / `update_dataset`
+
+### Dataset Versioning & Logic
+- `publish_dataset`: Mark a dataset as publicly viewable.
+- `restore_dataset_version`: Rollback a dataset to a previous historical version.
+- `compare_dataset_versions`: Get a diff summary between two internal versions.
+
+### Files (Upload / Download)
+- `download_version_file`: Safely streams a remote file and writes it to your absolute local file path.
+- `upload_dataset_file`: Reads a file from your local absolute file path, parses its MIME type, and securely uploads it via multipart form-data.
+
+### Permissions & Metadata
+- `get_folder_permissions` / `set_folder_permissions`: Read and dynamically assign user access roles for folders.
+- `list_metadata`: Browse available schematic metadata templates.
+- `add_metadata_to_dataset`: Apply an array of JSON metadata tags to a given dataset.
+
+### ⚠️ Destructive Operations (Protected)
+- `delete_project`
+- `delete_folder`
+- `delete_dataset`
+> **Security Guard:** To prevent the LLM from accidentally deleting crucial data during general logic processing, all deletion endpoints require an explicit parameter: `confirm_danger=True`. Without this, the MCP Server will immediately reject the command.
+
+---
 
 ## Prerequisites
 
@@ -35,7 +63,7 @@ python -m venv .venv
 # On Mac/Linux:
 source .venv/bin/activate
 
-pip install -r requirements.txt
+pip install -e .
 ```
 
 ## Configuration for Claude Desktop
