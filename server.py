@@ -122,8 +122,20 @@ async def upload_fdm_file(endpoint: str, file_path: str) -> str:
 @mcp.tool()
 async def search_datatagger(term: str, limit: int = 100) -> str:
     """Global search across projects, folders, and uploads."""
-    params = {"term": term, "limit": limit, "content_types": "folders.folder,projects.project,uploads.uploadsversion,uploads.uploadsversionfile"}
-    return format_json_response(await make_fdm_request("/api/v1/search/global/", params=params))
+    payload = {
+        "search_text": term,
+        "limit": limit,
+        "result_types": [
+            "project",
+            "folder",
+            "dataset",
+            "dataset_version",
+            "file",
+            "template",
+            "template_version"
+        ]
+    }
+    return format_json_response(await make_fdm_request("/api/v1/search/global/", method="POST", json_payload=payload))
 
 # --- SECTION: PROJECTS ---
 
