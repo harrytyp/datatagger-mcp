@@ -152,9 +152,9 @@ async def get_project(project_id: str) -> str:
     return format_json_response(await make_fdm_request(f"/api/v1/project/{project_id}/"))
 
 @mcp.tool()
-async def create_project(name: str, description: str = "") -> str:
+async def create_project(name: str) -> str:
     """Create a new project."""
-    payload = {"name": name, "description": description}
+    payload = {"name": name}
     return format_json_response(await make_fdm_request("/api/v1/project/", method="POST", json_payload=payload))
 
 @mcp.tool()
@@ -164,7 +164,7 @@ async def update_project(project_id: str, name: Optional[str] = None, descriptio
     if name is not None: payload["name"] = name
     if description is not None: payload["description"] = description
     if not payload: return "No fields provided to update."
-    return format_json_response(await make_fdm_request(f"/api/v1/project/{project_id}/", method="PUT", json_payload=payload))
+    return format_json_response(await make_fdm_request(f"/api/v1/project/{project_id}/", method="PATCH", json_payload=payload))
 
 @mcp.tool()
 async def delete_project(project_id: str, confirm_danger: bool = False) -> str:
@@ -188,9 +188,9 @@ async def get_folder(folder_id: str) -> str:
     return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/"))
 
 @mcp.tool()
-async def create_folder(project_id: str, name: str, description: str = "") -> str:
+async def create_folder(project_id: str, name: str) -> str:
     """Create a new folder inside a project."""
-    payload = {"project": project_id, "name": name, "description": description}
+    payload = {"project": project_id, "name": name}
     return format_json_response(await make_fdm_request("/api/v1/folder/", method="POST", json_payload=payload))
 
 @mcp.tool()
@@ -200,7 +200,7 @@ async def update_folder(folder_id: str, name: Optional[str] = None, description:
     if name is not None: payload["name"] = name
     if description is not None: payload["description"] = description
     if not payload: return "No fields provided to update."
-    return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/", method="PUT", json_payload=payload))
+    return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/", method="PATCH", json_payload=payload))
 
 @mcp.tool()
 async def delete_folder(folder_id: str, confirm_danger: bool = False) -> str:
@@ -219,9 +219,9 @@ async def list_datasets(folder_id: str = "", limit: int = 100, offset: int = 0, 
     return format_json_response(await make_fdm_request("/api/v1/uploads-dataset/", params=params))
 
 @mcp.tool()
-async def create_dataset(folder_id: str, name: str, description: str = "") -> str:
+async def create_dataset(folder_id: str, name: str) -> str:
     """Create a new dataset entry inside a folder."""
-    payload = {"folder": folder_id, "name": name, "description": description}
+    payload = {"folder": folder_id, "name": name}
     return format_json_response(await make_fdm_request("/api/v1/uploads-dataset/", method="POST", json_payload=payload))
 
 @mcp.tool()
