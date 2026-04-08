@@ -264,7 +264,8 @@ async def upload_dataset_file(dataset_id: str, source_path: str) -> str:
 @mcp.tool()
 async def set_folder_permissions(folder_id: str, folder_users: List[Dict[str, Any]]) -> str:
     """Set the user permissions array for a folder.
-    folder_users should be a list of dictionaries, e.g. [{"user": "uuid", "role": "editor"}]
+    CRITICAL: The folder_users payload MUST be a list of dictionaries explicitly defining 'email' and 'is_folder_admin'.
+    Example format: [{"email": "user@ub.tum.de", "is_folder_admin": False}]
     """
     payload = {"folder_users": folder_users}
     return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/permissions/", method="PUT", json_payload=payload))
