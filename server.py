@@ -1,12 +1,13 @@
 import os
 import mimetypes
-from typing import Any, Optional
+from typing import Any, Optional, Dict, List
 import httpx
 from mcp.server.fastmcp import FastMCP
 
 mcp = FastMCP("datatagger")
-
 USER_AGENT = "fdmMCP/1.0"
+
+# --- Authentication & Core Helpers ---
 
 def get_base_url() -> str:
     url = os.environ.get("FDM_BASE_URL", "")
@@ -20,12 +21,11 @@ def get_token() -> str:
         raise ValueError("FDM_TOKEN environment variable is not set")
     return token
 
-async def make_fdm_request(endpoint: str, params: Optional[dict] = None) -> dict[str, Any] | str | None:
-    """Make a request to the FDM API."""
+async def make_fdm_request(endpoint: str, method: str = "GET", params: Optional[dict] = None, json_payload: Optional[dict] = None) -> dict[str, Any] | str | None:
+    """Make a generic HTTP request to the FDM API."""
     base_url = get_base_url()
     token = get_token()
     
-    # Ensure endpoint starts with /
     if not endpoint.startswith("/"):
         endpoint = "/" + endpoint
         
@@ -36,39 +36,45 @@ async def make_fdm_request(endpoint: str, params: Optional[dict] = None) -> dict
         "Authorization": f"Bearer {token}"
     }
 
-    # Filter out None params
     if params:
         params = {k: v for k, v in params.items() if v is not None}
 
     async with httpx.AsyncClient() as client:
         try:
-            response = await client.get(url, headers=headers, params=params, timeout=30.0)
+            req_kwargs = {"headers": headers, "timeout": 30.0}
+            if params:
+                req_kwargs["params"] = params
+            if json_payload is not None:
+                req_kwargs["json"] = json_payload
+                
+            response = await client.request(method, url, **req_kwargs)
             response.raise_for_status()
             
+            if response.status_code == 204:
+                return "Operation successful (204 No Content)"
+                
             content_type = response.headers.get("content-type", "")
             if "json" in content_type.lower():
                 return response.json()
             else:
                 return response.text
+        except httpx.HTTPStatusError as e:
+            return f"API Error ({e.response.status_code}): {e.response.text}"
         except Exception as e:
-            return f"Error making request to API: {e}"
+            return f"Error making {method} request to API: {e}"
+
+def format_json_response(data: Any) -> str:
+    if isinstance(data, str):
+        return data
+    import json
+    return json.dumps(data, indent=2)
 
 async def download_fdm_file(endpoint: str, dest_path: str, overwrite: bool = False) -> str:
-    """Download a file from FDM API streaming to dest_path."""
     if os.path.exists(dest_path) and not overwrite:
-        return f"Error: File already exists at {dest_path} and overwrite is False. If you are sure, use overwrite=True."
+        return f"Error: File already exists at {dest_path} and overwrite is False."
     
-    base_url = get_base_url()
-    token = get_token()
-    
-    if not endpoint.startswith("/"):
-        endpoint = "/" + endpoint
-        
-    url = f"{base_url}{endpoint}"
-    headers = {
-        "User-Agent": USER_AGENT,
-        "Authorization": f"Bearer {token}"
-    }
+    url = f"{get_base_url()}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
+    headers = {"User-Agent": USER_AGENT, "Authorization": f"Bearer {get_token()}"}
     
     try:
         async with httpx.AsyncClient() as client:
@@ -82,21 +88,14 @@ async def download_fdm_file(endpoint: str, dest_path: str, overwrite: bool = Fal
         return f"Error downloading file: {e}"
 
 async def upload_fdm_file(endpoint: str, file_path: str) -> str:
-    """Upload a local file to FDM API."""
     if not os.path.exists(file_path):
-        return f"Error: File not found exactly at {file_path}. Please check your spelling and absolute path."
+        return f"Error: File not found exactly at {file_path}."
         
-    base_url = get_base_url()
-    token = get_token()
-    
-    if not endpoint.startswith("/"):
-        endpoint = "/" + endpoint
-        
-    url = f"{base_url}{endpoint}"
+    url = f"{get_base_url()}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
-        "Authorization": f"Bearer {token}"
+        "Authorization": f"Bearer {get_token()}"
     }
 
     try:
@@ -118,114 +117,165 @@ async def upload_fdm_file(endpoint: str, file_path: str) -> str:
     except Exception as e:
         return f"Error uploading file: {e}"
 
-def format_json_response(data: Any) -> str:
-    import json
-    if isinstance(data, str):
-        return data
-    return json.dumps(data, indent=2)
-
-
-@mcp.tool()
-async def list_projects(limit: int = 100, offset: int = 0, search: str = "") -> str:
-    """List Datatagger projects.
-    
-    Args:
-        limit: Max number of projects to return.
-        offset: Offset for pagination.
-        search: Optional search term to filter projects.
-    """
-    params = {
-        "limit": limit,
-        "offset": offset,
-    }
-    if search:
-        params["search"] = search
-
-    data = await make_fdm_request("/api/v1/project/", params=params)
-    return format_json_response(data)
-
-
-@mcp.tool()
-async def list_folders(project: str = "", limit: int = 100, offset: int = 0, search: str = "") -> str:
-    """List Datatagger folders.
-    
-    Args:
-        project: Optional project ID (UUID) to filter folders by project.
-        limit: Max number of folders to return.
-        offset: Offset for pagination.
-        search: Optional search term.
-    """
-    params = {
-        "limit": limit,
-        "offset": offset,
-    }
-    if project:
-        params["project"] = project
-    if search:
-        params["search"] = search
-
-    data = await make_fdm_request("/api/v1/folder/", params=params)
-    return format_json_response(data)
-
+# --- SECTION: SEARCH ---
 
 @mcp.tool()
 async def search_datatagger(term: str, limit: int = 100) -> str:
-    """Search globally across projects, folders, and other items in Datatagger.
-    
-    Args:
-        term: The search term.
-        limit: Max number of results.
-    """
-    params = {
-        "term": term,
-        "limit": limit,
-        "content_types": "folders.folder,projects.project,uploads.uploadsversion,uploads.uploadsversionfile"
-    }
-    data = await make_fdm_request("/api/v1/search/global/", params=params)
-    return format_json_response(data)
+    """Global search across projects, folders, and uploads."""
+    params = {"term": term, "limit": limit, "content_types": "folders.folder,projects.project,uploads.uploadsversion,uploads.uploadsversionfile"}
+    return format_json_response(await make_fdm_request("/api/v1/search/global/", params=params))
 
+# --- SECTION: PROJECTS ---
+
+@mcp.tool()
+async def list_projects(limit: int = 100, offset: int = 0, search: str = "") -> str:
+    """List Datatagger projects."""
+    params = {"limit": limit, "offset": offset}
+    if search: params["search"] = search
+    return format_json_response(await make_fdm_request("/api/v1/project/", params=params))
 
 @mcp.tool()
 async def get_project(project_id: str) -> str:
-    """Get details of a specific Datatagger project by its UUID.
-    
-    Args:
-        project_id: The UUID of the project.
-    """
-    data = await make_fdm_request(f"/api/v1/project/{project_id}/")
-    return format_json_response(data)
+    """Get details of a Datatagger project."""
+    return format_json_response(await make_fdm_request(f"/api/v1/project/{project_id}/"))
 
+@mcp.tool()
+async def create_project(name: str, description: str = "") -> str:
+    """Create a new project."""
+    payload = {"name": name, "description": description}
+    return format_json_response(await make_fdm_request("/api/v1/project/", method="POST", json_payload=payload))
+
+@mcp.tool()
+async def update_project(project_id: str, name: Optional[str] = None, description: Optional[str] = None) -> str:
+    """Update a project."""
+    payload = {}
+    if name is not None: payload["name"] = name
+    if description is not None: payload["description"] = description
+    if not payload: return "No fields provided to update."
+    return format_json_response(await make_fdm_request(f"/api/v1/project/{project_id}/", method="PUT", json_payload=payload))
+
+@mcp.tool()
+async def delete_project(project_id: str, confirm_danger: bool = False) -> str:
+    """Delete a project. REQUIRED: confirm_danger=True"""
+    if not confirm_danger: return "ERROR: Deletion rejected. You must set confirm_danger=True."
+    return format_json_response(await make_fdm_request(f"/api/v1/project/{project_id}/", method="DELETE"))
+
+# --- SECTION: FOLDERS ---
+
+@mcp.tool()
+async def list_folders(project: str = "", limit: int = 100, offset: int = 0, search: str = "") -> str:
+    """List folders."""
+    params = {"limit": limit, "offset": offset}
+    if project: params["project"] = project
+    if search: params["search"] = search
+    return format_json_response(await make_fdm_request("/api/v1/folder/", params=params))
 
 @mcp.tool()
 async def get_folder(folder_id: str) -> str:
-    """Get details of a specific Datatagger folder by its UUID.
-    
-    Args:
-        folder_id: The UUID of the folder.
-    """
-    data = await make_fdm_request(f"/api/v1/folder/{folder_id}/")
-    return format_json_response(data)
+    """Get details of a folder."""
+    return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/"))
+
+@mcp.tool()
+async def create_folder(project_id: str, name: str, description: str = "") -> str:
+    """Create a new folder inside a project."""
+    payload = {"project": project_id, "name": name, "description": description}
+    return format_json_response(await make_fdm_request("/api/v1/folder/", method="POST", json_payload=payload))
+
+@mcp.tool()
+async def update_folder(folder_id: str, name: Optional[str] = None, description: Optional[str] = None) -> str:
+    """Update a folder."""
+    payload = {}
+    if name is not None: payload["name"] = name
+    if description is not None: payload["description"] = description
+    if not payload: return "No fields provided to update."
+    return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/", method="PUT", json_payload=payload))
+
+@mcp.tool()
+async def delete_folder(folder_id: str, confirm_danger: bool = False) -> str:
+    """Delete a folder. REQUIRED: confirm_danger=True"""
+    if not confirm_danger: return "ERROR: Deletion rejected. You must set confirm_danger=True."
+    return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/", method="DELETE"))
+
+# --- SECTION: DATASETS & VERSIONS ---
+
+@mcp.tool()
+async def list_datasets(folder_id: str = "", limit: int = 100, offset: int = 0, search: str = "") -> str:
+    """List dataset entries. Filter by folder_id optional."""
+    params = {"limit": limit, "offset": offset}
+    if folder_id: params["folder"] = folder_id
+    if search: params["search"] = search
+    return format_json_response(await make_fdm_request("/api/v1/uploads-dataset/", params=params))
+
+@mcp.tool()
+async def create_dataset(folder_id: str, name: str, description: str = "") -> str:
+    """Create a new dataset entry inside a folder."""
+    payload = {"folder": folder_id, "name": name, "description": description}
+    return format_json_response(await make_fdm_request("/api/v1/uploads-dataset/", method="POST", json_payload=payload))
+
+@mcp.tool()
+async def delete_dataset(dataset_id: str, confirm_danger: bool = False) -> str:
+    """Delete a dataset. REQUIRED: confirm_danger=True"""
+    if not confirm_danger: return "ERROR: Deletion rejected. set confirm_danger=True."
+    return format_json_response(await make_fdm_request(f"/api/v1/uploads-dataset/{dataset_id}/", method="DELETE"))
+
+@mcp.tool()
+async def publish_dataset(dataset_id: str) -> str:
+    """Publish a dataset (make it officially public/viewable)."""
+    return format_json_response(await make_fdm_request(f"/api/v1/uploads-dataset/{dataset_id}/publish/", method="POST", json_payload={}))
+
+@mcp.tool()
+async def restore_dataset_version(dataset_id: str, uploads_version_id: str) -> str:
+    """Restore a dataset to a previous historical version."""
+    payload = {"uploads_version": uploads_version_id}
+    return format_json_response(await make_fdm_request(f"/api/v1/uploads-dataset/{dataset_id}/restore/", method="POST", json_payload=payload))
+
+@mcp.tool()
+async def compare_dataset_versions(version_id: str, compare_to_id: str) -> str:
+    """Get the diff/comparison between two dataset versions."""
+    payload = {"compare": compare_to_id}
+    return format_json_response(await make_fdm_request(f"/api/v1/uploads-version/{version_id}/diff/", method="POST", json_payload=payload))
+
+# --- SECTION: UPLOAD & DOWNLOAD FILE DATA ---
 
 @mcp.tool()
 async def download_version_file(version_id: str, dest_path: str, overwrite: bool = False) -> str:
-    """Download a Datatagger uploads-version file to a local destination.
-    
-    Args:
-        version_id: The UUID of the uploads-version.
-        dest_path: The absolute path on your computer where the file should be saved (e.g. C:\\temp\\data.csv).
-        overwrite: Set to True to overwrite if the file already exists.
-    """
+    """Download a version file dynamically to your local computer's absolute path."""
     return await download_fdm_file(f"/api/v1/uploads-version/{version_id}/download/", dest_path, overwrite)
 
 @mcp.tool()
 async def upload_dataset_file(dataset_id: str, source_path: str) -> str:
-    """Upload a local file into a Datatagger uploads-dataset.
-    
-    Args:
-        dataset_id: The UUID of the uploads-dataset to upload to.
-        source_path: The absolute path on your computer of the file to upload (e.g. C:\\temp\\data.csv).
-    """
+    """Upload a raw file from your local computer into a dataset."""
     return await upload_fdm_file(f"/api/v1/uploads-dataset/{dataset_id}/file/", source_path)
+
+# --- SECTION: PERMISSIONS ---
+
+@mcp.tool()
+async def set_folder_permissions(folder_id: str, folder_users: List[Dict[str, Any]]) -> str:
+    """Set the user permissions array for a folder.
+    folder_users should be a list of dictionaries, e.g. [{"user": "uuid", "role": "editor"}]
+    """
+    payload = {"folder_users": folder_users}
+    return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/permissions/", method="PUT", json_payload=payload))
+
+@mcp.tool()
+async def get_folder_permissions(folder_id: str) -> str:
+    """List all the active user permissions for a folder."""
+    return format_json_response(await make_fdm_request("/api/v1/folder-permission/", params={"folder": folder_id}))
+
+# --- SECTION: METADATA ---
+
+@mcp.tool()
+async def list_metadata(search: str = "", limit: int = 100) -> str:
+    """List available metadata template mappings across Data Tagger."""
+    params = {"limit": limit, "search": search}
+    return format_json_response(await make_fdm_request("/api/v1/metadata/", params=params))
+
+@mcp.tool()
+async def add_metadata_to_dataset(dataset_id: str, metadata_items: List[Dict[str, Any]]) -> str:
+    """Add a batch of metadata item tags (via json) to an existing dataset."""
+    # Simulates fdm_uploads_dataset_version_create_with_metadata logic
+    payload = {"metadata": metadata_items}
+    return format_json_response(await make_fdm_request(f"/api/v1/uploads-dataset/{dataset_id}/version/", method="POST", json_payload=payload))
 
 
 if __name__ == "__main__":
