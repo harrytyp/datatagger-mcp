@@ -1,4 +1,5 @@
 import os
+import mimetypes
 from typing import Any, Optional
 import httpx
 from mcp.server.fastmcp import FastMCP
@@ -51,6 +52,71 @@ async def make_fdm_request(endpoint: str, params: Optional[dict] = None) -> dict
                 return response.text
         except Exception as e:
             return f"Error making request to API: {e}"
+
+async def download_fdm_file(endpoint: str, dest_path: str, overwrite: bool = False) -> str:
+    """Download a file from FDM API streaming to dest_path."""
+    if os.path.exists(dest_path) and not overwrite:
+        return f"Error: File already exists at {dest_path} and overwrite is False. If you are sure, use overwrite=True."
+    
+    base_url = get_base_url()
+    token = get_token()
+    
+    if not endpoint.startswith("/"):
+        endpoint = "/" + endpoint
+        
+    url = f"{base_url}{endpoint}"
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Authorization": f"Bearer {token}"
+    }
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            async with client.stream("GET", url, headers=headers, timeout=300.0) as response:
+                response.raise_for_status()
+                with open(dest_path, "wb") as f:
+                    async for chunk in response.aiter_bytes():
+                        f.write(chunk)
+        return f"File successfully downloaded to: {dest_path}"
+    except Exception as e:
+        return f"Error downloading file: {e}"
+
+async def upload_fdm_file(endpoint: str, file_path: str) -> str:
+    """Upload a local file to FDM API."""
+    if not os.path.exists(file_path):
+        return f"Error: File not found exactly at {file_path}. Please check your spelling and absolute path."
+        
+    base_url = get_base_url()
+    token = get_token()
+    
+    if not endpoint.startswith("/"):
+        endpoint = "/" + endpoint
+        
+    url = f"{base_url}{endpoint}"
+    headers = {
+        "User-Agent": USER_AGENT,
+        "Accept": "application/json",
+        "Authorization": f"Bearer {token}"
+    }
+
+    try:
+        filename = os.path.basename(file_path)
+        mime_type, _ = mimetypes.guess_type(file_path)
+        if not mime_type:
+            mime_type = "application/octet-stream"
+            
+        async with httpx.AsyncClient() as client:
+            with open(file_path, "rb") as f:
+                files = {"file": (filename, f, mime_type)}
+                response = await client.post(url, headers=headers, files=files, timeout=600.0)
+                response.raise_for_status()
+                content_type = response.headers.get("content-type", "")
+                if "json" in content_type.lower():
+                    import json
+                    return json.dumps(response.json(), indent=2)
+                return response.text
+    except Exception as e:
+        return f"Error uploading file: {e}"
 
 def format_json_response(data: Any) -> str:
     import json
@@ -139,6 +205,27 @@ async def get_folder(folder_id: str) -> str:
     """
     data = await make_fdm_request(f"/api/v1/folder/{folder_id}/")
     return format_json_response(data)
+
+@mcp.tool()
+async def download_version_file(version_id: str, dest_path: str, overwrite: bool = False) -> str:
+    """Download a Datatagger uploads-version file to a local destination.
+    
+    Args:
+        version_id: The UUID of the uploads-version.
+        dest_path: The absolute path on your computer where the file should be saved (e.g. C:\\temp\\data.csv).
+        overwrite: Set to True to overwrite if the file already exists.
+    """
+    return await download_fdm_file(f"/api/v1/uploads-version/{version_id}/download/", dest_path, overwrite)
+
+@mcp.tool()
+async def upload_dataset_file(dataset_id: str, source_path: str) -> str:
+    """Upload a local file into a Datatagger uploads-dataset.
+    
+    Args:
+        dataset_id: The UUID of the uploads-dataset to upload to.
+        source_path: The absolute path on your computer of the file to upload (e.g. C:\\temp\\data.csv).
+    """
+    return await upload_fdm_file(f"/api/v1/uploads-dataset/{dataset_id}/file/", source_path)
 
 
 if __name__ == "__main__":
