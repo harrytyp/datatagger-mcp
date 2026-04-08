@@ -232,7 +232,9 @@ async def delete_dataset(dataset_id: str, confirm_danger: bool = False) -> str:
 
 @mcp.tool()
 async def publish_dataset(dataset_id: str) -> str:
-    """Publish a dataset (make it officially public/viewable)."""
+    """Finalize/Commit a dataset (often referred to as 'publishing' internally).
+    Note: In Data Tagger, this is used to commit an upload into a folder, not to make it public on the web!
+    """
     return format_json_response(await make_fdm_request(f"/api/v1/uploads-dataset/{dataset_id}/publish/", method="POST", json_payload={}))
 
 @mcp.tool()
