@@ -17,6 +17,8 @@ This server exposes 20+ specialized tools to your MCP client, logically grouped 
 - `create_folder` / `update_folder`
 - `create_dataset` / `update_dataset`
 
+> **Note on Descriptions:** The native Datatagger REST API currently has an undocumented bug where passing a `description` field during the POST creation of Projects and Folders triggers a 500 Internal Server Error. To protect the LLM and ensure flawless execution, the auto-generated MCP tools purposely omit passing descriptions upon creation until the API is patched.
+
 ### Dataset Versioning & Logic
 - `publish_dataset`: Mark a dataset as publicly viewable.
 - `restore_dataset_version`: Rollback a dataset to a previous historical version.
@@ -44,6 +46,15 @@ This server exposes 20+ specialized tools to your MCP client, logically grouped 
 - Python 3.10 or higher
 - A personal API token for Data Tagger (`FDM_TOKEN`)
 - The base URL of your Data Tagger instance (`FDM_BASE_URL`)
+
+### How to get your `FDM_TOKEN`
+You can easily extract your personal Data Tagger JSON Web Token (JWT) directly via your browser:
+1. Log into your Data Tagger instance (e.g., `https://datatagger.ub.tum.de`).
+2. Press `F12` to open your browser's Developer Tools.
+3. Navigate to the **Application** tab (Chrome/Edge) or **Storage** tab (Firefox).
+4. Unfurl the **Cookies** section in the left sidebar and click on your website domain.
+5. In the main table, find the row with the Name `token`. 
+6. Double-click the Value cell, copy the massive text string (e.g., `eyJhb...`), and paste it as your `FDM_TOKEN`!
 
 ## Installation
 
