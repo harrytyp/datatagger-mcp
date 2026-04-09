@@ -1,6 +1,6 @@
-# Data Tagger MCP Server
+# DataTagger MCP Server
 
-A comprehensive Model Context Protocol (MCP) server for interacting with the Data Tagger API. This server enables LLM clients (like Claude for Desktop) to directly interface with Data Tagger—allowing for powerful autonomous workflows including bulk uploads, metadata tagging, and permissions management.
+A comprehensive Model Context Protocol (MCP) server for interacting with the TUM DataTagger API. This server enables LLM clients (like Claude for Desktop) to directly interface with Data Tagger—allowing for powerful autonomous workflows including bulk uploads, metadata tagging, and permissions management.
 
 ## Features
 
