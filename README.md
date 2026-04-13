@@ -1,43 +1,64 @@
 # DataTagger MCP Server
 
-A comprehensive Model Context Protocol (MCP) server for interacting with the TUM DataTagger API. This server enables LLM clients (like Claude for Desktop) to directly interface with Data Tagger—allowing for powerful autonomous workflows including bulk uploads, metadata tagging, and permissions management.
+A comprehensive Model Context Protocol (MCP) server for interacting with the TUM
+DataTagger API. This server enables LLM clients (like Claude for Desktop) to directly
+interface with Data Tagger—allowing for powerful autonomous workflows including bulk
+uploads, metadata tagging, and permissions management.
 
 ## Features
 
 This server exposes 20+ specialized tools to your MCP client, logically grouped below:
 
 ### Search & Read
+
 - `search_datatagger`: Perform a global search across folders, projects, and uploads.
 - `list_projects` / `get_project`: Retrieve available projects.
 - `list_folders` / `get_folder`: Retrieve available folders.
 - `list_datasets`: Retrieve dataset entries inside folders.
 
 ### Creation & Modification
+
 - `create_project` / `update_project`
 - `create_folder` / `update_folder`
 - `create_dataset` / `update_dataset`
 
-> **Note on Descriptions:** The native Datatagger REST API currently has an undocumented bug where passing a `description` field during the POST creation of Projects and Folders triggers a 500 Internal Server Error. To protect the LLM and ensure flawless execution, the auto-generated MCP tools purposely omit passing descriptions upon creation until the API is patched.
+> [!NOTE]
+>
+> The native Datatagger REST API currently has an undocumented bug where passing
+> a `description` field during the POST creation of Projects and Folders triggers a 500
+> Internal Server Error. To protect the LLM and ensure flawless execution, the
+> auto-generated MCP tools purposely omit passing descriptions upon creation until the
+> API is patched.
 
 ### Dataset Versioning & Logic
+
 - `publish_dataset`: Mark a dataset as publicly viewable.
 - `restore_dataset_version`: Rollback a dataset to a previous historical version.
 - `compare_dataset_versions`: Get a diff summary between two internal versions.
 
 ### Files (Upload / Download)
-- `download_version_file`: Safely streams a remote file and writes it to your absolute local file path.
-- `upload_dataset_file`: Reads a file from your local absolute file path, parses its MIME type, and securely uploads it via multipart form-data.
+
+- `download_version_file`: Safely streams a remote file and writes it to your absolute
+  local file path.
+- `upload_dataset_file`: Reads a file from your local absolute file path, parses its
+  MIME type, and securely uploads it via multipart form-data.
 
 ### Permissions & Metadata
-- `get_folder_permissions` / `set_folder_permissions`: Read and dynamically assign user access roles for folders.
+
+- `get_folder_permissions` / `set_folder_permissions`: Read and dynamically assign user
+  access roles for folders.
 - `list_metadata`: Browse available schematic metadata templates.
 - `add_metadata_to_dataset`: Apply an array of JSON metadata tags to a given dataset.
 
 ### ⚠️ Destructive Operations (Protected)
+
 - `delete_project`
 - `delete_folder`
 - `delete_dataset`
-> **Security Guard:** To prevent the LLM from accidentally deleting crucial data during general logic processing, all deletion endpoints require an explicit parameter: `confirm_danger=True`. Without this, the MCP Server will immediately reject the command.
+  > **Security Guard:** To prevent the LLM from accidentally deleting crucial data during
+  > general logic processing, all deletion endpoints require an explicit parameter:
+  > `confirm_danger=True`. Without this, the MCP Server will immediately reject the
+  > command.
 
 ---
 
@@ -48,25 +69,32 @@ This server exposes 20+ specialized tools to your MCP client, logically grouped 
 - The base URL of your Data Tagger instance (`FDM_BASE_URL`)
 
 ### How to get your `FDM_TOKEN`
-You can easily extract your personal Data Tagger JSON Web Token (JWT) directly via your browser:
+
+You can easily extract your personal Data Tagger JSON Web Token (JWT) directly via your
+browser:
+
 1. Log into your Data Tagger instance (e.g., `https://datatagger.ub.tum.de`).
 2. Press `F12` to open your browser's Developer Tools.
 3. Navigate to the **Application** tab (Chrome/Edge) or **Storage** tab (Firefox).
 4. Unfurl the **Cookies** section in the left sidebar and click on your website domain.
-5. In the main table, find the row with the Name `token`. 
-6. Double-click the Value cell, copy the massive text string (e.g., `eyJhb...`), and paste it as your `FDM_TOKEN`!
+5. In the main table, find the row with the Name `token`.
+6. Double-click the Value cell, copy the massive text string (e.g., `eyJhb...`), and
+   paste it as your `FDM_TOKEN`!
 
 ## Installation
 
-You can install and run this standalone or configure it directly in your MCP client. We recommend using `uv` or standard Python `venv`.
+You can install and run this standalone or configure it directly in your MCP client. We
+recommend using `uv` or standard Python `venv`.
 
 1. Clone the repository:
+
 ```bash
 git clone https://github.com/harrytyp/datatagger-mcp.git
 cd datatagger-mcp
 ```
 
 2. Create a virtual environment and install requirements:
+
 ```bash
 python -m venv .venv
 # On Windows:
@@ -79,21 +107,20 @@ pip install -e .
 
 ## Configuration for Claude Desktop
 
-To use this with Claude for Desktop, you need to add the server to your `claude_desktop_config.json` file. 
+To use this with Claude for Desktop, you need to add the server to your
+`claude_desktop_config.json` file.
 
 - **Windows:** `%APPDATA%\Claude\claude_desktop_config.json`
 - **macOS:** `~/Library/Application Support/Claude/claude_desktop_config.json`
 
-Add the following configuration, making sure to replace the paths and variables with your actual local paths and credentials:
+Add the following configuration, making sure to replace the paths and variables with
+your actual local paths and credentials:
 
 ```json
 {
   "mcpServers": {
     "datatagger": {
-      "command": "C:\\path\\to\\datatagger-mcp\\.venv\\Scripts\\python.exe",
-      "args": [
-        "C:\\path\\to\\datatagger-mcp\\server.py"
-      ],
+      "command": "/ABSOLUTE/PATH/TO/PARENT/FOLDER/OF/venv/bin/datatagger-mcp",
       "env": {
         "FDM_BASE_URL": "https://datatagger.ub.tum.de",
         "FDM_TOKEN": "YOUR_PERSONAL_TOKEN_HERE"
@@ -103,13 +130,24 @@ Add the following configuration, making sure to replace the paths and variables 
 }
 ```
 
-> **Note:** Do NOT commit your actual `.env` or personal tokens to version control. 
+> [!WARNING]
+>
+> You may need to put the full path to the datatagger-mcp executable in the
+> command field. You can get this by running `which datatagger-mcp` on macOS/Linux or
+> `where datatagger-mcp` on Windows.
+
+> [!NOTE]
+>
+> Do NOT commit your actual `.env` or personal tokens to version control.
 
 ## Development
 
 To test the server locally over `stdio`, you can run:
 
 ```bash
-python server.py
+datatagger-mcp
 ```
-*(It will hang waiting for JSON-RPC messages - this is normal behavior for MCP stdio servers).*
+
+> [!IMPORTANT]
+> There will be no output. It will hang waiting for JSON-RPC messages -
+> this is normal behavior for MCP stdio servers.
