@@ -1,17 +1,35 @@
+[build-system]
+build-backend = "setuptools.build_meta"
+requires = [
+    "setuptools >= 77",
+    "wheel",
+]
+
 [project]
-name = "datatagger-mcp"
-version = "0.1.0"
-description = "An MCP server for Data Tagger"
-readme = "README.md"
-requires-python = ">=3.10"
 dependencies = [
     "mcp[cli]>=1.2.0",
     "httpx>=0.28.0"
 ]
+description = "An MCP server for Data Tagger"
+name = "datatagger-mcp"
+readme = "README.md"
+requires-python = ">=3.10"
+version = "0.1.0"
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[project.scripts]
+datatagger-mcp = "datatagger_mcp.__main__:main"
 
-[tool.uv]
-dev-dependencies = []
+[tool.ruff]
+line-length = 88
+
+[tool.ruff.lint]
+select = ["E", "F", "B", "I", "D"]
+ignore = [
+    "D107",  # Missing docstring in __init__
+    "D203",  # 1 blank line required before class docstring
+    "D213",  # Multi-line docstring summary should start at the second line
+]
+
+[tool.ruff.lint.isort]
+lines-after-imports = 2
+known-first-party = ["datatagger_mcp"]
