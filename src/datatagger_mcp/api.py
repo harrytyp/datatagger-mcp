@@ -72,8 +72,8 @@ async def register_page_handler(request: Request):
         # Detect protocol behind reverse proxy
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
-        # In hosted mode, we use the /mcp endpoint for the streamable transport
-        personal_url = f"{forwarded_proto}://{host}/mcp?token={new_token}"
+        # In hosted mode, we use the /mcp/sse endpoint
+        personal_url = f"{forwarded_proto}://{host}/mcp/sse?token={new_token}"
 
         return HTMLResponse(
             f"""
