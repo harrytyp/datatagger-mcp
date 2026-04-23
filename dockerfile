@@ -6,5 +6,8 @@ COPY . .
 
 RUN pip install .
 
-# MCP Server über STDIO starten
-CMD ["datatagger-mcp"]
+# Expose port 8000 for SSE transport
+EXPOSE 8000
+
+# Start MCP Server in SSE mode by default in Docker
+CMD ["datatagger-mcp", "--transport", "sse", "--host", "0.0.0.0", "--port", "8000"]

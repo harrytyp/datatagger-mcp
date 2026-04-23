@@ -140,14 +140,52 @@ your actual local paths and credentials:
 >
 > Do NOT commit your actual `.env` or personal tokens to version control.
 
-## Development
+## Usage Modes
 
-To test the server locally over `stdio`, you can run:
+The server supports two transport modes:
+
+1.  **STDIO (Local)**: Default mode, used for local integrations like Claude Desktop.
+2.  **SSE (Server)**: Used for network-accessible deployments (e.g., in Docker).
+
+### Running Locally (STDIO)
 
 ```bash
-datatagger-mcp
+datatagger-mcp --transport stdio
 ```
 
-> [!IMPORTANT]
-> There will be no output. It will hang waiting for JSON-RPC messages -
-> this is normal behavior for MCP stdio servers.
+### Running as a Server (SSE)
+
+```bash
+datatagger-mcp --transport sse --host 0.0.0.0 --port 8000
+```
+
+## Docker Deployment
+
+The included `dockerfile` is optimized for SSE deployment.
+
+1.  **Build the image**:
+    ```bash
+    docker build -t datatagger-mcp .
+    ```
+
+2.  **Run the container**:
+    ```bash
+    docker run -p 8000:8000 \
+      -e FDM_BASE_URL="https://datatagger.ub.tum.de" \
+      -e FDM_TOKEN="YOUR_TOKEN" \
+      datatagger-mcp
+    ```
+
+The server will be reachable at `http://localhost:8000/sse`.
+
+## Configuration
+
+Settings can be provided via CLI arguments or environment variables:
+
+| Setting | CLI Argument | Env Variable | Default |
+| :--- | :--- | :--- | :--- |
+| Transport | `--transport` | `MCP_TRANSPORT` | `stdio` |
+| Host | `--host` | `MCP_HOST` | `0.0.0.0` |
+| Port | `--port` | `MCP_PORT` | `8000` |
+| API URL | - | `FDM_BASE_URL` | - |
+| API Token | - | `FDM_TOKEN` | - |
