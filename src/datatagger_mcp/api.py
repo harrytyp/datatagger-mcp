@@ -16,11 +16,23 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp, Scope, Receive, Send
 
 from mcp.server.fastmcp import FastMCP, Context
+from mcp.server.transport_security import TransportSecuritySettings
 
 from . import USER_AGENT
 
 # --- FastMCP Instance ---
-mcp = FastMCP("datatagger", stateless_http=True)
+# Use stateless_http=True and transport_security to bypass host validation issues
+mcp = FastMCP(
+    "datatagger",
+    stateless_http=True,
+    transport_security=TransportSecuritySettings(
+        allowed_hosts=[
+            "datatagger-mcp.duckdns.org",
+            "localhost",
+            "127.0.0.1",
+        ]
+    ),
+)
 
 # --- Session & Global Config ---
 SESSION_TIMEOUT = 1800  # 30 minutes
