@@ -6,6 +6,7 @@ import time
 import asyncio
 from typing import Any, Dict, List, Optional, Tuple
 from contextvars import ContextVar
+from contextlib import asynccontextmanager
 
 import httpx
 from fastapi import FastAPI
@@ -19,7 +20,6 @@ from mcp.server.fastmcp import FastMCP, Context
 from . import USER_AGENT
 
 # --- FastMCP Instance ---
-# Use stateless_http=True to bypass the FastAPI/Starlette mounting bug
 mcp = FastMCP("datatagger", stateless_http=True)
 
 # --- Session & Global Config ---
@@ -73,7 +73,6 @@ async def register_page_handler(request: Request):
         # Detect protocol behind reverse proxy
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
-        # In hosted mode, we use the /mcp endpoint provided by the sub-app
         personal_url = f"{forwarded_proto}://{host}/mcp/?token={new_token}"
 
         return HTMLResponse(
@@ -126,7 +125,19 @@ async def session_cleanup_loop():
 
 # --- Final App Construction (FastAPI) ---
 
-app = FastAPI()
+# Create the internal MCP app first
+mcp_app = mcp.streamable_http_app()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # CRITICAL: Initialize the MCP app's lifespan (TaskGroup, etc.)
+    async with mcp_app.router.lifespan_context(app):
+        # Start our own background tasks
+        asyncio.create_task(session_cleanup_loop())
+        yield
+
+# Main app with combined lifespan
+app = FastAPI(lifespan=lifespan)
 
 # Token Middleware for FastAPI
 class TokenAuthMiddleware(BaseHTTPMiddleware):
@@ -140,28 +151,13 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(TokenAuthMiddleware)
 
-# Static Routes
+# Registration Route
 @app.api_route("/register", methods=["GET", "POST"])
 async def register_route(request: Request):
     return await register_page_handler(request)
 
-# Mounting the MCP server logic
-try:
-    if hasattr(mcp, "streamable_http_app"):
-        mcp_app = mcp.streamable_http_app()
-        # Mounting on / to avoid /mcp/mcp prefixing issues
-        app.mount("/", mcp_app)
-        print("DEBUG: Mounted MCP via streamable_http_app on /")
-    elif hasattr(mcp, "sse_app"):
-        mcp_app = mcp.sse_app()
-        app.mount("/", mcp_app)
-        print("DEBUG: Mounted MCP via sse_app on /")
-except Exception as e:
-    print(f"ERROR during app mounting: {e}")
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(session_cleanup_loop())
+# Mount the MCP app on / (it already contains /mcp routes internally)
+app.mount("/", mcp_app)
 
 
 # --- Authentication & Core Helpers ---
