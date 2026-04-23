@@ -27,24 +27,25 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
-        import mcp.server.fastmcp as fastmcp_mod
         import uvicorn
+        
+        # Get the starlette app directly from the instance.
+        # We try different ways to find it depending on the version.
+        app = getattr(mcp_server, "_app", None)
+        if app is None:
+            try:
+                app = mcp_server.get_starlette_app()
+            except AttributeError:
+                # Last resort: try to trigger the internal creation
+                # by calling a dummy sse related method if it exists
+                # or just use the internal server to build it.
+                from mcp.server.fastmcp import FastMCP
+                # This is a bit of a hack to get the app
+                mcp_server.run(transport="stdio") # This won't work in a script
+                raise RuntimeError("Could not find Starlette app in FastMCP instance. Please check your mcp library version.")
 
-        def custom_run_sse(mcp_instance):
-            """Custom SSE runner that forces 0.0.0.0 binding."""
-            # Use the internal _app or get_starlette_app()
-            app = getattr(mcp_instance, "_app", None)
-            if app is None:
-                try:
-                    app = mcp_instance.get_starlette_app()
-                except AttributeError:
-                    raise RuntimeError("Could not find Starlette app in FastMCP instance")
-            
-            uvicorn.run(app, host=args.host, port=args.port)
-
-        # Monkeypatch the internal FastMCP SSE runner
-        fastmcp_mod.run_sse = custom_run_sse
-        mcp_server.run(transport="sse")
+        print(f"Starting SSE server on {args.host}:{args.port}")
+        uvicorn.run(app, host=args.host, port=args.port)
     else:
         mcp_server.run(transport="stdio")
 
