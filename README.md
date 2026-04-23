@@ -188,14 +188,31 @@ docker-compose up -d --build
 
 The server will be reachable at `http://localhost:8000/sse`.
 
+## Multi-User Support
+
+If you are hosting this server for multiple users (e.g., in a shared Docker container via SSE), each user can provide their own API key directly through the chat interface.
+
+### Session-based Authentication
+
+Users can "log in" to their current session by telling the LLM their token. The LLM will then use the `configure_auth` tool:
+
+```python
+configure_auth(token="YOUR_PERSONAL_TOKEN", base_url="https://datatagger.ub.tum.de")
+```
+
+This configuration is:
+- **Private**: Stored only for the current connection (session).
+- **Transient**: Lost when the session ends or the server restarts.
+- **Priority**: Overrides any global environment variables set on the server.
+
 ## Configuration
 
-Settings can be provided via CLI arguments or environment variables:
+Settings can be provided via CLI arguments, environment variables, or the `configure_auth` tool:
 
-| Setting | CLI Argument | Env Variable | Default |
-| :--- | :--- | :--- | :--- |
-| Transport | `--transport` | `MCP_TRANSPORT` | `stdio` |
-| Host | `--host` | `MCP_HOST` | `0.0.0.0` |
-| Port | `--port` | `MCP_PORT` | `8000` |
-| API URL | - | `FDM_BASE_URL` | - |
-| API Token | - | `FDM_TOKEN` | - |
+| Setting | CLI Argument | Env Variable | Session Tool | Default |
+| :--- | :--- | :--- | :--- | :--- |
+| Transport | `--transport` | `MCP_TRANSPORT` | - | `stdio` |
+| Host | `--host` | `MCP_HOST` | - | `0.0.0.0` |
+| Port | `--port` | `MCP_PORT` | - | `8000` |
+| API URL | - | `FDM_BASE_URL` | `configure_auth` | - |
+| API Token | - | `FDM_TOKEN` | `configure_auth` | - |

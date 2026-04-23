@@ -6,25 +6,59 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 
+from mcp.server.fastmcp import Context
+
 from . import USER_AGENT, mcp
+
+
+# --- Session-based Authentication Storage ---
+# Stores {session_id: {"token": "...", "base_url": "..."}}
+SESSION_AUTH: Dict[str, Dict[str, str]] = {}
+
+
+def get_session_id(ctx: Optional[Context]) -> Optional[str]:
+    """Extract session ID from the MCP context if available."""
+    if not ctx:
+        return None
+    # FastMCP Context provides access to the underlying session
+    try:
+        return str(id(ctx.request_context.session))
+    except Exception:
+        return None
 
 
 # --- Authentication & Core Helpers ---
 
 
-def get_base_url() -> str:
-    """Return the FDM base URL from environment, raising if unset."""
+def get_base_url(ctx: Optional[Context] = None) -> str:
+    """Return the FDM base URL (Session > Environment)."""
+    session_id = get_session_id(ctx)
+    if session_id and session_id in SESSION_AUTH:
+        url = SESSION_AUTH[session_id].get("base_url")
+        if url:
+            return url.rstrip("/")
+
     url = os.environ.get("FDM_BASE_URL", "")
     if not url:
-        raise ValueError("FDM_BASE_URL environment variable is not set")
+        raise ValueError(
+            "FDM_BASE_URL is not set. Please use 'configure_auth' tool or set env var."
+        )
     return url.rstrip("/")
 
 
-def get_token() -> str:
-    """Return the FDM bearer token from environment, raising if unset."""
+def get_token(ctx: Optional[Context] = None) -> str:
+    """Return the FDM bearer token (Session > Environment)."""
+    session_id = get_session_id(ctx)
+    if session_id and session_id in SESSION_AUTH:
+        token = SESSION_AUTH[session_id].get("token")
+        if token:
+            return token
+
     token = os.environ.get("FDM_TOKEN", "")
     if not token:
-        raise ValueError("FDM_TOKEN environment variable is not set")
+        raise ValueError(
+            "FDM_TOKEN is not set. Please use 'configure_auth' tool or set env var."
+        )
     return token
 
 
@@ -33,10 +67,14 @@ async def make_fdm_request(
     method: str = "GET",
     params: Optional[dict] = None,
     json_payload: Optional[dict] = None,
+    ctx: Optional[Context] = None,
 ) -> dict[str, Any] | str | None:
     """Make a generic HTTP request to the FDM API."""
-    base_url = get_base_url()
-    token = get_token()
+    try:
+        base_url = get_base_url(ctx)
+        token = get_token(ctx)
+    except ValueError as e:
+        return str(e)
 
     if not endpoint.startswith("/"):
         endpoint = "/" + endpoint
@@ -86,14 +124,20 @@ def format_json_response(data: Any) -> str:
 
 
 async def download_fdm_file(
-    endpoint: str, dest_path: str, overwrite: bool = False
+    endpoint: str, dest_path: str, overwrite: bool = False, ctx: Optional[Context] = None
 ) -> str:
     """Stream a file from the FDM API to a local destination path."""
     if os.path.exists(dest_path) and not overwrite:
         return f"Error: File already exists at {dest_path} and overwrite is False."
 
-    url = f"{get_base_url()}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
-    headers = {"User-Agent": USER_AGENT, "Authorization": f"Bearer {get_token()}"}
+    try:
+        base_url = get_base_url(ctx)
+        token = get_token(ctx)
+    except ValueError as e:
+        return str(e)
+
+    url = f"{base_url}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
+    headers = {"User-Agent": USER_AGENT, "Authorization": f"Bearer {token}"}
 
     try:
         async with httpx.AsyncClient() as client:
@@ -109,16 +153,24 @@ async def download_fdm_file(
         return f"Error downloading file: {e}"
 
 
-async def upload_fdm_file(endpoint: str, file_path: str) -> str:
+async def upload_fdm_file(
+    endpoint: str, file_path: str, ctx: Optional[Context] = None
+) -> str:
     """Upload a local file to the FDM API endpoint as multipart form data."""
     if not os.path.exists(file_path):
         return f"Error: File not found exactly at {file_path}."
 
-    url = f"{get_base_url()}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
+    try:
+        base_url = get_base_url(ctx)
+        token = get_token(ctx)
+    except ValueError as e:
+        return str(e)
+
+    url = f"{base_url}{endpoint if endpoint.startswith('/') else '/' + endpoint}"
     headers = {
         "User-Agent": USER_AGENT,
         "Accept": "application/json",
-        "Authorization": f"Bearer {get_token()}",
+        "Authorization": f"Bearer {token}",
     }
 
     try:
@@ -144,11 +196,37 @@ async def upload_fdm_file(endpoint: str, file_path: str) -> str:
         return f"Error uploading file: {e}"
 
 
+# --- SECTION: AUTH CONFIGURATION ---
+
+
+@mcp.tool()
+async def configure_auth(
+    token: str, base_url: Optional[str] = None, ctx: Optional[Context] = None
+) -> str:
+    """Configure API authentication for the current session.
+
+    Use this to set your personal FDM_TOKEN and FDM_BASE_URL if they
+    are not already configured in the server's environment.
+    """
+    session_id = get_session_id(ctx)
+    if not session_id:
+        return "Error: Could not determine session ID. Are you using a supported transport (SSE)?"
+
+    if session_id not in SESSION_AUTH:
+        SESSION_AUTH[session_id] = {}
+
+    SESSION_AUTH[session_id]["token"] = token
+    if base_url:
+        SESSION_AUTH[session_id]["base_url"] = base_url
+
+    return f"Authentication successfully configured for session {session_id}."
+
+
 # --- SECTION: SEARCH ---
 
 
 @mcp.tool()
-async def search_datatagger(term: str, limit: int = 100) -> str:
+async def search_datatagger(term: str, limit: int = 100, ctx: Optional[Context] = None) -> str:
     """Global search across projects, folders, and uploads."""
     payload = {
         "search_text": term,
@@ -165,7 +243,7 @@ async def search_datatagger(term: str, limit: int = 100) -> str:
     }
     return format_json_response(
         await make_fdm_request(
-            "/api/v1/search/global/", method="POST", json_payload=payload
+            "/api/v1/search/global/", method="POST", json_payload=payload, ctx=ctx
         )
     )
 
@@ -174,36 +252,43 @@ async def search_datatagger(term: str, limit: int = 100) -> str:
 
 
 @mcp.tool()
-async def list_projects(limit: int = 100, offset: int = 0, search: str = "") -> str:
+async def list_projects(
+    limit: int = 100, offset: int = 0, search: str = "", ctx: Optional[Context] = None
+) -> str:
     """List Datatagger projects."""
     params = {"limit": limit, "offset": offset}
     if search:
         params["search"] = search
     return format_json_response(
-        await make_fdm_request("/api/v1/project/", params=params)
+        await make_fdm_request("/api/v1/project/", params=params, ctx=ctx)
     )
 
 
 @mcp.tool()
-async def get_project(project_id: str) -> str:
+async def get_project(project_id: str, ctx: Optional[Context] = None) -> str:
     """Get details of a Datatagger project."""
     return format_json_response(
-        await make_fdm_request(f"/api/v1/project/{project_id}/")
+        await make_fdm_request(f"/api/v1/project/{project_id}/", ctx=ctx)
     )
 
 
 @mcp.tool()
-async def create_project(name: str) -> str:
+async def create_project(name: str, ctx: Optional[Context] = None) -> str:
     """Create a new project."""
     payload = {"name": name}
     return format_json_response(
-        await make_fdm_request("/api/v1/project/", method="POST", json_payload=payload)
+        await make_fdm_request(
+            "/api/v1/project/", method="POST", json_payload=payload, ctx=ctx
+        )
     )
 
 
 @mcp.tool()
 async def update_project(
-    project_id: str, name: Optional[str] = None, description: Optional[str] = None
+    project_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    ctx: Optional[Context] = None,
 ) -> str:
     """Update a project."""
     payload = {}
@@ -215,18 +300,25 @@ async def update_project(
         return "No fields provided to update."
     return format_json_response(
         await make_fdm_request(
-            f"/api/v1/project/{project_id}/", method="PATCH", json_payload=payload
+            f"/api/v1/project/{project_id}/",
+            method="PATCH",
+            json_payload=payload,
+            ctx=ctx,
         )
     )
 
 
 @mcp.tool()
-async def delete_project(project_id: str, confirm_danger: bool = False) -> str:
+async def delete_project(
+    project_id: str, confirm_danger: bool = False, ctx: Optional[Context] = None
+) -> str:
     """Delete a project. REQUIRED: confirm_danger=True."""
     if not confirm_danger:
         return "ERROR: Deletion rejected. You must set confirm_danger=True."
     return format_json_response(
-        await make_fdm_request(f"/api/v1/project/{project_id}/", method="DELETE")
+        await make_fdm_request(
+            f"/api/v1/project/{project_id}/", method="DELETE", ctx=ctx
+        )
     )
 
 
@@ -235,7 +327,11 @@ async def delete_project(project_id: str, confirm_danger: bool = False) -> str:
 
 @mcp.tool()
 async def list_folders(
-    project: str = "", limit: int = 100, offset: int = 0, search: str = ""
+    project: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    search: str = "",
+    ctx: Optional[Context] = None,
 ) -> str:
     """List folders."""
     params = {"limit": limit, "offset": offset}
@@ -244,28 +340,37 @@ async def list_folders(
     if search:
         params["search"] = search
     return format_json_response(
-        await make_fdm_request("/api/v1/folder/", params=params)
+        await make_fdm_request("/api/v1/folder/", params=params, ctx=ctx)
     )
 
 
 @mcp.tool()
-async def get_folder(folder_id: str) -> str:
+async def get_folder(folder_id: str, ctx: Optional[Context] = None) -> str:
     """Get details of a folder."""
-    return format_json_response(await make_fdm_request(f"/api/v1/folder/{folder_id}/"))
+    return format_json_response(
+        await make_fdm_request(f"/api/v1/folder/{folder_id}/", ctx=ctx)
+    )
 
 
 @mcp.tool()
-async def create_folder(project_id: str, name: str) -> str:
+async def create_folder(
+    project_id: str, name: str, ctx: Optional[Context] = None
+) -> str:
     """Create a new folder inside a project."""
     payload = {"project": project_id, "name": name}
     return format_json_response(
-        await make_fdm_request("/api/v1/folder/", method="POST", json_payload=payload)
+        await make_fdm_request(
+            "/api/v1/folder/", method="POST", json_payload=payload, ctx=ctx
+        )
     )
 
 
 @mcp.tool()
 async def update_folder(
-    folder_id: str, name: Optional[str] = None, description: Optional[str] = None
+    folder_id: str,
+    name: Optional[str] = None,
+    description: Optional[str] = None,
+    ctx: Optional[Context] = None,
 ) -> str:
     """Update a folder."""
     payload = {}
@@ -277,18 +382,23 @@ async def update_folder(
         return "No fields provided to update."
     return format_json_response(
         await make_fdm_request(
-            f"/api/v1/folder/{folder_id}/", method="PATCH", json_payload=payload
+            f"/api/v1/folder/{folder_id}/",
+            method="PATCH",
+            json_payload=payload,
+            ctx=ctx,
         )
     )
 
 
 @mcp.tool()
-async def delete_folder(folder_id: str, confirm_danger: bool = False) -> str:
+async def delete_folder(
+    folder_id: str, confirm_danger: bool = False, ctx: Optional[Context] = None
+) -> str:
     """Delete a folder. REQUIRED: confirm_danger=True."""
     if not confirm_danger:
         return "ERROR: Deletion rejected. You must set confirm_danger=True."
     return format_json_response(
-        await make_fdm_request(f"/api/v1/folder/{folder_id}/", method="DELETE")
+        await make_fdm_request(f"/api/v1/folder/{folder_id}/", method="DELETE", ctx=ctx)
     )
 
 
@@ -297,7 +407,11 @@ async def delete_folder(folder_id: str, confirm_danger: bool = False) -> str:
 
 @mcp.tool()
 async def list_datasets(
-    folder_id: str = "", limit: int = 100, offset: int = 0, search: str = ""
+    folder_id: str = "",
+    limit: int = 100,
+    offset: int = 0,
+    search: str = "",
+    ctx: Optional[Context] = None,
 ) -> str:
     """List dataset entries. Filter by folder_id optional."""
     params = {"limit": limit, "offset": offset}
@@ -306,51 +420,54 @@ async def list_datasets(
     if search:
         params["search"] = search
     return format_json_response(
-        await make_fdm_request("/api/v1/uploads-dataset/", params=params)
+        await make_fdm_request("/api/v1/uploads-dataset/", params=params, ctx=ctx)
     )
 
 
 @mcp.tool()
-async def create_dataset(folder_id: str, name: str) -> str:
+async def create_dataset(
+    folder_id: str, name: str, ctx: Optional[Context] = None
+) -> str:
     """Create a new dataset entry inside a folder."""
     payload = {"folder": folder_id, "name": name}
     return format_json_response(
         await make_fdm_request(
-            "/api/v1/uploads-dataset/", method="POST", json_payload=payload
+            "/api/v1/uploads-dataset/", method="POST", json_payload=payload, ctx=ctx
         )
     )
 
 
 @mcp.tool()
-async def delete_dataset(dataset_id: str, confirm_danger: bool = False) -> str:
+async def delete_dataset(
+    dataset_id: str, confirm_danger: bool = False, ctx: Optional[Context] = None
+) -> str:
     """Delete a dataset. REQUIRED: confirm_danger=True."""
     if not confirm_danger:
         return "ERROR: Deletion rejected. set confirm_danger=True."
     return format_json_response(
         await make_fdm_request(
-            f"/api/v1/uploads-dataset/{dataset_id}/", method="DELETE"
+            f"/api/v1/uploads-dataset/{dataset_id}/", method="DELETE", ctx=ctx
         )
     )
 
 
 @mcp.tool()
-async def publish_dataset(dataset_id: str) -> str:
-    """Finalize/Commit a dataset (often referred to as 'publishing' internally).
-
-    Note: In Data Tagger, this is used to commit an upload into a folder,
-    not to make it public on the web!
-    """
+async def publish_dataset(dataset_id: str, ctx: Optional[Context] = None) -> str:
+    """Finalize/Commit a dataset (often referred to as 'publishing' internally)."""
     return format_json_response(
         await make_fdm_request(
             f"/api/v1/uploads-dataset/{dataset_id}/publish/",
             method="POST",
             json_payload={},
+            ctx=ctx,
         )
     )
 
 
 @mcp.tool()
-async def restore_dataset_version(dataset_id: str, uploads_version_id: str) -> str:
+async def restore_dataset_version(
+    dataset_id: str, uploads_version_id: str, ctx: Optional[Context] = None
+) -> str:
     """Restore a dataset to a previous historical version."""
     payload = {"uploads_version": uploads_version_id}
     return format_json_response(
@@ -358,12 +475,15 @@ async def restore_dataset_version(dataset_id: str, uploads_version_id: str) -> s
             f"/api/v1/uploads-dataset/{dataset_id}/restore/",
             method="POST",
             json_payload=payload,
+            ctx=ctx,
         )
     )
 
 
 @mcp.tool()
-async def compare_dataset_versions(version_id: str, compare_to_id: str) -> str:
+async def compare_dataset_versions(
+    version_id: str, compare_to_id: str, ctx: Optional[Context] = None
+) -> str:
     """Get the diff/comparison between two dataset versions."""
     payload = {"compare": compare_to_id}
     return format_json_response(
@@ -371,6 +491,7 @@ async def compare_dataset_versions(version_id: str, compare_to_id: str) -> str:
             f"/api/v1/uploads-version/{version_id}/diff/",
             method="POST",
             json_payload=payload,
+            ctx=ctx,
         )
     )
 
@@ -380,19 +501,21 @@ async def compare_dataset_versions(version_id: str, compare_to_id: str) -> str:
 
 @mcp.tool()
 async def download_version_file(
-    version_id: str, dest_path: str, overwrite: bool = False
+    version_id: str, dest_path: str, overwrite: bool = False, ctx: Optional[Context] = None
 ) -> str:
     """Download a version file dynamically to your local computer's absolute path."""
     return await download_fdm_file(
-        f"/api/v1/uploads-version/{version_id}/download/", dest_path, overwrite
+        f"/api/v1/uploads-version/{version_id}/download/", dest_path, overwrite, ctx=ctx
     )
 
 
 @mcp.tool()
-async def upload_dataset_file(dataset_id: str, source_path: str) -> str:
+async def upload_dataset_file(
+    dataset_id: str, source_path: str, ctx: Optional[Context] = None
+) -> str:
     """Upload a raw file from your local computer into a dataset."""
     return await upload_fdm_file(
-        f"/api/v1/uploads-dataset/{dataset_id}/file/", source_path
+        f"/api/v1/uploads-dataset/{dataset_id}/file/", source_path, ctx=ctx
     )
 
 
@@ -401,30 +524,30 @@ async def upload_dataset_file(dataset_id: str, source_path: str) -> str:
 
 @mcp.tool()
 async def set_folder_permissions(
-    folder_id: str, folder_users: List[Dict[str, Any]]
+    folder_id: str,
+    folder_users: List[Dict[str, Any]],
+    ctx: Optional[Context] = None,
 ) -> str:
-    """Set the user permissions array for a folder.
-
-    CRITICAL: The folder_users payload MUST be a list of dictionaries
-    explicitly defining 'email' and 'is_folder_admin'.
-    Example format: [{"email": "user@ub.tum.de", "is_folder_admin": False}]
-    """
+    """Set the user permissions array for a folder."""
     payload = {"folder_users": folder_users}
     return format_json_response(
         await make_fdm_request(
             f"/api/v1/folder/{folder_id}/permissions/",
             method="PUT",
             json_payload=payload,
+            ctx=ctx,
         )
     )
 
 
 @mcp.tool()
-async def get_folder_permissions(folder_id: str) -> str:
+async def get_folder_permissions(
+    folder_id: str, ctx: Optional[Context] = None
+) -> str:
     """List all the active user permissions for a folder."""
     return format_json_response(
         await make_fdm_request(
-            "/api/v1/folder-permission/", params={"folder": folder_id}
+            "/api/v1/folder-permission/", params={"folder": folder_id}, ctx=ctx
         )
     )
 
@@ -433,17 +556,21 @@ async def get_folder_permissions(folder_id: str) -> str:
 
 
 @mcp.tool()
-async def list_metadata(search: str = "", limit: int = 100) -> str:
+async def list_metadata(
+    search: str = "", limit: int = 100, ctx: Optional[Context] = None
+) -> str:
     """List available metadata template mappings across Data Tagger."""
     params = {"limit": limit, "search": search}
     return format_json_response(
-        await make_fdm_request("/api/v1/metadata/", params=params)
+        await make_fdm_request("/api/v1/metadata/", params=params, ctx=ctx)
     )
 
 
 @mcp.tool()
 async def add_metadata_to_dataset(
-    dataset_id: str, metadata_items: List[Dict[str, Any]]
+    dataset_id: str,
+    metadata_items: List[Dict[str, Any]],
+    ctx: Optional[Context] = None,
 ) -> str:
     """Add a batch of metadata item tags (via json) to an existing dataset."""
     # Simulates fdm_uploads_dataset_version_create_with_metadata logic
@@ -453,5 +580,6 @@ async def add_metadata_to_dataset(
             f"/api/v1/uploads-dataset/{dataset_id}/version/",
             method="POST",
             json_payload=payload,
+            ctx=ctx,
         )
     )
