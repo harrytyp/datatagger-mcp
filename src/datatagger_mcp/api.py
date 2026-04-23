@@ -146,6 +146,10 @@ async def register_page(request: Request):
 
 # --- Standalone Starlette App & Explicit Routing ---
 
+async def health_check(request: Request):
+    print("DEBUG: Root health check called")
+    return HTMLResponse("Datatagger MCP is running. Go to <a href='/register'>/register</a> to onboard.")
+
 async def handle_sse(request: Request):
     """Handle the SSE connection and bridge it to FastMCP."""
     print(f"DEBUG: Incoming SSE connection from {request.client.host}")
@@ -196,6 +200,7 @@ async def lifespan(app: Starlette):
 
 # Define the Route list explicitly
 routes = [
+    Route("/", health_check),
     Route("/register", register_page, methods=["GET", "POST"]),
     Route("/sse", handle_sse),
     Route("/messages", handle_messages, methods=["POST"]),

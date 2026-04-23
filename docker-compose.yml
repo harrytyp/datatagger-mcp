@@ -12,6 +12,7 @@ services:
       - MCP_MODE=hosted
       - MCP_PORT=8000
       - MCP_HOST=0.0.0.0
+      - PYTHONUNBUFFERED=1
 
   caddy:
     image: caddy:2
