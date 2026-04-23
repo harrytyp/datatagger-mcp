@@ -19,7 +19,8 @@ from mcp.server.fastmcp import FastMCP, Context
 from . import USER_AGENT
 
 # --- FastMCP Instance ---
-mcp = FastMCP("datatagger")
+# Use stateless_http=True to bypass the FastAPI/Starlette mounting bug
+mcp = FastMCP("datatagger", stateless_http=True)
 
 # --- Session & Global Config ---
 SESSION_TIMEOUT = 1800  # 30 minutes
@@ -72,7 +73,7 @@ async def register_page_handler(request: Request):
         # Detect protocol behind reverse proxy
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
-        # In hosted mode, we use the /mcp/ endpoint with a trailing slash
+        # With stateless_http, we usually connect to the base mount point
         personal_url = f"{forwarded_proto}://{host}/mcp/?token={new_token}"
 
         return HTMLResponse(
@@ -148,15 +149,9 @@ async def register_route(request: Request):
 try:
     if hasattr(mcp, "streamable_http_app"):
         mcp_app = mcp.streamable_http_app()
-        
-        # Diagnostic route to see what's happening
-        @app.get("/mcp/{path:path}")
-        async def mcp_diag(path: str, request: Request):
-            print(f"DEBUG: MCP request received for path: {path}")
-            return HTMLResponse(f"DEBUG: You requested /mcp/{path}. Check logs for routing details.", status_code=200)
-
+        # With stateless_http, mounting under /mcp should now work correctly
         app.mount("/mcp", mcp_app)
-        print("DEBUG: Mounted MCP via streamable_http_app on /mcp")
+        print("DEBUG: Mounted MCP via streamable_http_app on /mcp (stateless_http=True)")
     elif hasattr(mcp, "sse_app"):
         mcp_app = mcp.sse_app()
         app.mount("/mcp", mcp_app)
