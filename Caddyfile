@@ -4,11 +4,16 @@ datatagger-mcp.duckdns.org {
         header_up X-Real-IP {remote_host}
         header_up X-Forwarded-For {remote_host}
         header_up X-Forwarded-Proto {scheme}
+
+        # Disable buffering for SSE
+        flush_interval -1
     }
 
-    # Disable buffering for SSE to ensure real-time delivery
+    # Global headers for streaming stability
     header {
         Cache-Control "no-cache"
         Connection "keep-alive"
+        Content-Type "text/event-stream"
+        X-Accel-Buffering "no"
     }
 }
