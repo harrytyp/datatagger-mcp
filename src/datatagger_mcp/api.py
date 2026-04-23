@@ -163,6 +163,20 @@ async def handle_messages(request: Request):
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: Starlette):
+    """Modern Starlette lifespan to manage the background cleanup task."""
+    cleanup_task = asyncio.create_task(session_cleanup_loop())
+    yield
+    cleanup_task.cancel()
+    try:
+        await cleanup_task
+    except asyncio.CancelledError:
+        pass
+
+
 # Define the Route list explicitly
 routes = [
     Route("/register", register_page, methods=["GET", "POST"]),
@@ -170,11 +184,11 @@ routes = [
     Route("/messages", handle_messages, methods=["POST"]),
 ]
 
-# Create the app with the routes and middleware
+# Create the app with the routes, middleware and lifespan
 app = Starlette(
     routes=routes,
-    on_startup=[startup_event],
-    middleware=[Middleware(TokenMiddleware)]
+    middleware=[Middleware(TokenMiddleware)],
+    lifespan=lifespan
 )
 
 
