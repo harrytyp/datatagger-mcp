@@ -1,7 +1,7 @@
 import argparse
 import os
 
-from .api import mcp
+from .api import mcp as mcp_server
 
 
 def main():
@@ -27,7 +27,7 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
-        import mcp.server.fastmcp
+        import mcp.server.fastmcp as fastmcp_mod
         import uvicorn
 
         def custom_run_sse(mcp_instance):
@@ -38,17 +38,15 @@ def main():
                 try:
                     app = mcp_instance.get_starlette_app()
                 except AttributeError:
-                    # Fallback to creating the app if possible
-                    # This depends on mcp internals
                     raise RuntimeError("Could not find Starlette app in FastMCP instance")
             
             uvicorn.run(app, host=args.host, port=args.port)
 
         # Monkeypatch the internal FastMCP SSE runner
-        mcp.server.fastmcp.run_sse = custom_run_sse
-        mcp.run(transport="sse")
+        fastmcp_mod.run_sse = custom_run_sse
+        mcp_server.run(transport="sse")
     else:
-        mcp.run(transport="stdio")
+        mcp_server.run(transport="stdio")
 
 
 if __name__ == "__main__":
