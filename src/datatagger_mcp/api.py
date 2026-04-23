@@ -73,7 +73,7 @@ async def register_page_handler(request: Request):
         # Detect protocol behind reverse proxy
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
-        # With stateless_http, we usually connect to the base mount point
+        # In hosted mode, we use the /mcp endpoint provided by the sub-app
         personal_url = f"{forwarded_proto}://{host}/mcp/?token={new_token}"
 
         return HTMLResponse(
@@ -149,13 +149,13 @@ async def register_route(request: Request):
 try:
     if hasattr(mcp, "streamable_http_app"):
         mcp_app = mcp.streamable_http_app()
-        # With stateless_http, mounting under /mcp should now work correctly
-        app.mount("/mcp", mcp_app)
-        print("DEBUG: Mounted MCP via streamable_http_app on /mcp (stateless_http=True)")
+        # Mounting on / to avoid /mcp/mcp prefixing issues
+        app.mount("/", mcp_app)
+        print("DEBUG: Mounted MCP via streamable_http_app on /")
     elif hasattr(mcp, "sse_app"):
         mcp_app = mcp.sse_app()
-        app.mount("/mcp", mcp_app)
-        print("DEBUG: Mounted MCP via sse_app on /mcp")
+        app.mount("/", mcp_app)
+        print("DEBUG: Mounted MCP via sse_app on /")
 except Exception as e:
     print(f"ERROR during app mounting: {e}")
 
