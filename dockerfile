@@ -15,6 +15,5 @@ ENV MCP_MODE=hosted
 ENV MCP_HOST=0.0.0.0
 ENV MCP_PORT=8000
 
-# Start the server using the console script
-# This will trigger the 'hosted' branch in __main__.py
-CMD ["datatagger-mcp"]
+# Start the server directly as a module
+CMD ["python", "-m", "datatagger_mcp"]
