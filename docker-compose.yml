@@ -1,0 +1,15 @@
+version: "3.8"
+
+services:
+  mcp-datatagger:
+    build:
+      context: .
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - FDM_BASE_URL=https://datatagger.ub.tum.de
+      - FDM_TOKEN=YOUR_PERSONAL_TOKEN_HERE
+      - MCP_TRANSPORT=sse
+      - MCP_PORT=8000
+      - MCP_HOST=0.0.0.0

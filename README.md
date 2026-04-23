@@ -161,7 +161,17 @@ datatagger-mcp --transport sse --host 0.0.0.0 --port 8000
 
 ## Docker Deployment
 
-The included `dockerfile` is optimized for SSE deployment.
+The repository includes everything needed for Docker deployment.
+
+### 1. Using Docker Compose (Recommended)
+
+Edit the `environment` variables in `docker-compose.yml` and run:
+
+```bash
+docker-compose up -d --build
+```
+
+### 2. Using Docker Build
 
 1.  **Build the image**:
     ```bash
