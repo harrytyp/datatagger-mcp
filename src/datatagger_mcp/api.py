@@ -11,15 +11,15 @@ from starlette.applications import Starlette
 from starlette.responses import HTMLResponse, JSONResponse
 from starlette.requests import Request
 from starlette.routing import Route, Mount
+from starlette.middleware import Middleware
 from starlette.types import ASGIApp, Scope, Receive, Send
 from mcp.server.sse import SseServerTransport
 
 from mcp.server.fastmcp import FastMCP, Context
 
-from . import USER_AGENT
-
-# --- FastMCP Instance ---
+# --- FastMCP & SSE Transport ---
 mcp = FastMCP("datatagger")
+sse = SseServerTransport("/messages")
 
 # --- Session & Mode Configuration ---
 MCP_MODE = os.environ.get("MCP_MODE", "local")
@@ -144,19 +144,13 @@ async def register_page(request: Request):
     )
 
 
-# --- Standalone Starlette App & Manual SSE Mounting ---
-app = Starlette()
-sse = SseServerTransport("/messages")
+# --- Standalone Starlette App & Explicit Routing ---
 
-
-@app.route("/sse")
 async def handle_sse(request: Request):
     """Handle the SSE connection and bridge it to FastMCP."""
     async with sse.connect_sse(
         request.scope, request.receive, request._send
     ) as (read_stream, write_stream):
-        # We access the internal server from FastMCP
-        # This is the standard way to run the server logic on a stream
         await mcp.server.run(
             read_stream,
             write_stream,
@@ -164,22 +158,24 @@ async def handle_sse(request: Request):
         )
 
 
-@app.route("/messages", methods=["POST"])
 async def handle_messages(request: Request):
     """Handle POST messages from the SSE client."""
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
 
-# Mount the /register endpoint
-app.add_route("/register", register_page, methods=["GET", "POST"])
+# Define the Route list explicitly
+routes = [
+    Route("/register", register_page, methods=["GET", "POST"]),
+    Route("/sse", handle_sse),
+    Route("/messages", handle_messages, methods=["POST"]),
+]
 
-# Apply Token Middleware to the standalone app
-app.add_middleware(TokenMiddleware)
-
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(session_cleanup_loop())
+# Create the app with the routes and middleware
+app = Starlette(
+    routes=routes,
+    on_startup=[startup_event],
+    middleware=[Middleware(TokenMiddleware)]
+)
 
 
 # --- Authentication & Core Helpers ---
