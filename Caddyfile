@@ -13,7 +13,6 @@ datatagger-mcp.duckdns.org {
     header {
         Cache-Control "no-cache"
         Connection "keep-alive"
-        Content-Type "text/event-stream"
         X-Accel-Buffering "no"
     }
 }
