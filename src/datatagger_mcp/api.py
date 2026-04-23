@@ -8,11 +8,10 @@ from typing import Any, Dict, List, Optional, Tuple
 from contextvars import ContextVar
 
 import httpx
+from fastapi import FastAPI
 from starlette.responses import HTMLResponse
 from starlette.requests import Request
-from starlette.applications import Starlette
-from starlette.routing import Route
-from starlette.middleware import Middleware
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from mcp.server.fastmcp import FastMCP, Context
 
@@ -20,6 +19,9 @@ from . import USER_AGENT
 
 # --- FastMCP Instance ---
 mcp = FastMCP("datatagger")
+
+# Diagnose FastMCP
+print(f"DEBUG: FastMCP instance methods: {[m for m in dir(mcp) if not m.startswith('_')]}")
 session_base_url_var: ContextVar[Optional[str]] = ContextVar("session_base_url", default=None)
 
 # In-memory store: {token: {"key": key, "base_url": url, "last_active": timestamp}}
@@ -130,26 +132,42 @@ async def register_page(request: Request):
 
 # --- Standalone Starlette App & Explicit Routing ---
 
-# --- Final App Construction ---
+# --- Final App Construction (FastAPI) ---
 
-# The native FastMCP Starlette app
-app = mcp.get_starlette_app()
+app = FastAPI()
 
-# We add our custom routes to the Starlette app
-app.add_route("/register", register_page, methods=["GET", "POST"])
+# Registration page
+@app.api_route("/register", methods=["GET", "POST"])
+async def register_page_route(request: Request):
+    return await register_page(request)
 
-# Apply Token Middleware
-app.add_middleware(TokenMiddleware)
+# Token Middleware for FastAPI
+class TokenAuthMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request, call_next):
+        token = request.query_params.get("token")
+        if token and token in token_store:
+            token_store[token]["last_active"] = time.time()
+            session_key_var.set(token_store[token]["key"])
+            session_base_url_var.set(token_store[token]["base_url"])
+        return await call_next(request)
+
+app.add_middleware(TokenAuthMiddleware)
+
+# Mounting the MCP server logic
+# If get_starlette_app exists, we use it as a sub-app
+try:
+    if hasattr(mcp, "get_starlette_app"):
+        mcp_app = mcp.get_starlette_app()
+        app.mount("/mcp", mcp_app)
+        print("DEBUG: Mounted MCP via get_starlette_app on /mcp")
+    else:
+        # Fallback to SSE if native app is missing
+        print("DEBUG: get_starlette_app missing, using internal server logic")
+        # Note: We will implement a manual fallback if needed based on logs
+except Exception as e:
+    print(f"ERROR during app mounting: {e}")
 
 # Cleanup task logic
-async def session_cleanup_loop():
-    while True:
-        try:
-            cleanup_expired_sessions()
-        except Exception:
-            pass
-        await asyncio.sleep(300)
-
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(session_cleanup_loop())

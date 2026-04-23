@@ -4,8 +4,8 @@ WORKDIR /app
 
 COPY . .
 
-# Install the package and uvicorn for hosted mode
-RUN pip install . && pip install uvicorn
+# Install the package, uvicorn and fastapi for hosted mode
+RUN pip install . && pip install uvicorn fastapi
 
 # Expose port 8000 for SSE and Registration UI
 EXPOSE 8000
