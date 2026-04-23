@@ -4,12 +4,17 @@ WORKDIR /app
 
 COPY . .
 
-# Install the package and mcp-proxy
-RUN pip install . && pip install mcp-proxy
+# Install the package and uvicorn for hosted mode
+RUN pip install . && pip install uvicorn
 
-# Expose port 8000 for the proxy
+# Expose port 8000 for SSE and Registration UI
 EXPOSE 8000
 
-# Start mcp-proxy to expose the local stdio server as SSE
-# --sse-host 0.0.0.0 is now handled correctly by the proxy
-CMD ["mcp-proxy", "--sse-host", "0.0.0.0", "--sse-port", "8000", "--", "datatagger-mcp", "--transport", "stdio"]
+# Set Hosted mode for Docker
+ENV MCP_MODE=hosted
+ENV MCP_HOST=0.0.0.0
+ENV MCP_PORT=8000
+
+# Start the server using the console script
+# This will trigger the 'hosted' branch in __main__.py
+CMD ["datatagger-mcp"]

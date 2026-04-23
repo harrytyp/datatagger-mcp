@@ -1,18 +1,32 @@
-"""MCP tool definitions for the Datatagger/FDM API."""
-
 import mimetypes
 import os
-from typing import Any, Dict, List, Optional
+import json
+import uuid
+import time
+import asyncio
+from typing import Any, Dict, List, Optional, Tuple
+from contextvars import ContextVar
 
 import httpx
+from starlette.responses import HTMLResponse
+from starlette.requests import Request
+from starlette.types import ASGIApp, Scope, Receive, Send
 
 from mcp.server.fastmcp import Context
 
 from . import USER_AGENT, mcp
 
+# --- Session & Mode Configuration ---
+# MCP_MODE: "local" (stdio/env) or "hosted" (sse/token)
+MCP_MODE = os.environ.get("MCP_MODE", "local")
+SESSION_TIMEOUT = 1800  # 30 minutes
+session_key_var: ContextVar[Optional[str]] = ContextVar("session_key", default=None)
+session_base_url_var: ContextVar[Optional[str]] = ContextVar("session_base_url", default=None)
 
-# --- Session-based Authentication Storage ---
-# Stores {session_id: {"token": "...", "base_url": "..."}}
+# In-memory store: {token: {"key": key, "base_url": url, "last_active": timestamp}}
+token_store: Dict[str, Dict[str, Any]] = {}
+
+# Legacy store for stdio sessions (optional fallback)
 SESSION_AUTH: Dict[str, Dict[str, str]] = {}
 
 
@@ -20,46 +34,156 @@ def get_session_id(ctx: Optional[Context]) -> Optional[str]:
     """Extract session ID from the MCP context if available."""
     if not ctx:
         return None
-    # FastMCP Context provides access to the underlying session
     try:
         return str(id(ctx.request_context.session))
     except Exception:
         return None
 
 
+def cleanup_expired_sessions():
+    """Remove sessions that have been inactive for too long."""
+    now = time.time()
+    expired = [
+        t for t, data in token_store.items() if now - data["last_active"] > SESSION_TIMEOUT
+    ]
+    for t in expired:
+        del token_store[t]
+
+
+class TokenMiddleware:
+    """Middleware to extract token from URL and set the session context."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "http":
+            request = Request(scope)
+            token = request.query_params.get("token")
+
+            if token and token in token_store:
+                token_store[token]["last_active"] = time.time()
+                session_key_var.set(token_store[token]["key"])
+                session_base_url_var.set(token_store[token]["base_url"])
+
+        await self.app(scope, receive, send)
+
+
+# --- Registration UI & Endpoints ---
+@mcp.external_app.route("/register", methods=["GET", "POST"])
+async def register_page(request: Request):
+    """Simple registration page to exchange API key for a session token."""
+    if request.method == "POST":
+        form = await request.form()
+        api_key = str(form.get("api_key", "")).strip()
+        base_url = str(form.get("base_url", "https://datatagger.ub.tum.de")).strip()
+
+        if not api_key:
+            return HTMLResponse("ERROR: API Key is required", status_code=400)
+
+        new_token = str(uuid.uuid4())
+        token_store[new_token] = {
+            "key": api_key,
+            "base_url": base_url,
+            "last_active": time.time(),
+        }
+
+        # Build the SSE URL
+        host = request.headers.get("host", "localhost:8000")
+        protocol = "https" if request.scope.get("scheme") == "https" else "http"
+        personal_url = f"{protocol}://{host}/sse?token={new_token}"
+
+        return HTMLResponse(
+            f"""
+            <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 40px auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+                <h2 style="color: #2c3e50;">Registration Successful</h2>
+                <p>Use the following URL in your MCP client (e.g. KISSKI):</p>
+                <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; word-break: break-all; font-family: monospace; border: 1px solid #eee; margin: 10px 0;">
+                    {personal_url}
+                </div>
+                <p style="color: #666; font-size: 0.9em; margin-top: 20px;">
+                    Note: This session will expire after 30 minutes of inactivity.
+                </p>
+                <a href="/register" style="display: inline-block; margin-top: 10px; color: #3498db; text-decoration: none;">&larr; Register another key</a>
+            </div>
+        """
+        )
+
+    return HTMLResponse(
+        """
+        <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 40px auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
+            <h2 style="color: #2c3e50;">Data Tagger MCP Registration</h2>
+            <p style="color: #666;">Enter your API token to generate a personal session URL.</p>
+            <form method="post">
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">API Token:</label>
+                    <input type="password" name="api_key" placeholder="Paste your token here" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;" required>
+                </div>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold;">Data Tagger Base URL:</label>
+                    <input type="text" name="base_url" value="https://datatagger.ub.tum.de" style="width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; box-sizing: border-box;">
+                </div>
+                <button type="submit" style="background: #3498db; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 1em; width: 100%;">Generate MCP URL</button>
+            </form>
+        </div>
+    """
+    )
+
+
+# Apply Middleware
+mcp.external_app.add_middleware(TokenMiddleware)
+
+
+# Cleanup task (runs every 5 minutes)
+async def session_cleanup_loop():
+    while True:
+        try:
+            cleanup_expired_sessions()
+        except Exception:
+            pass
+        await asyncio.sleep(300)
+
+
+@mcp.external_app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(session_cleanup_loop())
+
+
 # --- Authentication & Core Helpers ---
 
 
-def get_base_url(ctx: Optional[Context] = None) -> str:
-    """Return the FDM base URL (Session > Environment)."""
+def get_auth_config(ctx: Optional[Context] = None) -> Tuple[str, str]:
+    """
+    Unified authentication resolver.
+    1. Check Token-Store (ContextVar) - Hosted Mode (SSE)
+    2. Check Session-Store (FastMCP Context) - Manual stdio configuration
+    3. Check Environment Variables - Local Mode (os.environ)
+    """
+    # 1. Hosted Mode (via Middleware/ContextVar)
+    token = session_key_var.get()
+    base_url = session_base_url_var.get()
+
+    if token and base_url:
+        return token, base_url.rstrip("/")
+
+    # 2. Manual Session Store (via legacy configure_auth tool call in stdio)
     session_id = get_session_id(ctx)
     if session_id and session_id in SESSION_AUTH:
-        url = SESSION_AUTH[session_id].get("base_url")
-        if url:
-            return url.rstrip("/")
+        auth = SESSION_AUTH[session_id]
+        return auth["token"], auth["base_url"].rstrip("/")
 
-    url = os.environ.get("FDM_BASE_URL", "")
-    if not url:
-        raise ValueError(
-            "FDM_BASE_URL is not set. Please use 'configure_auth' tool or set env var."
-        )
-    return url.rstrip("/")
+    # 3. Local Mode (Environment Variables)
+    env_token = os.environ.get("FDM_TOKEN", "")
+    env_base_url = os.environ.get("FDM_BASE_URL", "https://datatagger.ub.tum.de")
 
+    if env_token:
+        return env_token, env_base_url.rstrip("/")
 
-def get_token(ctx: Optional[Context] = None) -> str:
-    """Return the FDM bearer token (Session > Environment)."""
-    session_id = get_session_id(ctx)
-    if session_id and session_id in SESSION_AUTH:
-        token = SESSION_AUTH[session_id].get("token")
-        if token:
-            return token
-
-    token = os.environ.get("FDM_TOKEN", "")
-    if not token:
-        raise ValueError(
-            "FDM_TOKEN is not set. Please use 'configure_auth' tool or set env var."
-        )
-    return token
+    raise ValueError(
+        "No authentication configured. \n"
+        "- In local mode: set FDM_TOKEN environment variable.\n"
+        "- In hosted mode: Visit /register to generate a URL with a token."
+    )
 
 
 async def make_fdm_request(
@@ -71,8 +195,7 @@ async def make_fdm_request(
 ) -> dict[str, Any] | str | None:
     """Make a generic HTTP request to the FDM API."""
     try:
-        base_url = get_base_url(ctx)
-        token = get_token(ctx)
+        token, base_url = get_auth_config(ctx)
     except ValueError as e:
         return str(e)
 
@@ -131,8 +254,7 @@ async def download_fdm_file(
         return f"Error: File already exists at {dest_path} and overwrite is False."
 
     try:
-        base_url = get_base_url(ctx)
-        token = get_token(ctx)
+        token, base_url = get_auth_config(ctx)
     except ValueError as e:
         return str(e)
 
@@ -161,8 +283,7 @@ async def upload_fdm_file(
         return f"Error: File not found exactly at {file_path}."
 
     try:
-        base_url = get_base_url(ctx)
-        token = get_token(ctx)
+        token, base_url = get_auth_config(ctx)
     except ValueError as e:
         return str(e)
 
@@ -196,30 +317,7 @@ async def upload_fdm_file(
         return f"Error uploading file: {e}"
 
 
-# --- SECTION: AUTH CONFIGURATION ---
-
-
-@mcp.tool()
-async def configure_auth(
-    token: str, base_url: Optional[str] = None, ctx: Optional[Context] = None
-) -> str:
-    """Configure API authentication for the current session.
-
-    Use this to set your personal FDM_TOKEN and FDM_BASE_URL if they
-    are not already configured in the server's environment.
-    """
-    session_id = get_session_id(ctx)
-    if not session_id:
-        return "Error: Could not determine session ID. Are you using a supported transport (SSE)?"
-
-    if session_id not in SESSION_AUTH:
-        SESSION_AUTH[session_id] = {}
-
-    SESSION_AUTH[session_id]["token"] = token
-    if base_url:
-        SESSION_AUTH[session_id]["base_url"] = base_url
-
-    return f"Authentication successfully configured for session {session_id}."
+# --- SECTION: SEARCH ---
 
 
 # --- SECTION: SEARCH ---
