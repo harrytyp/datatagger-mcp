@@ -21,14 +21,13 @@ from . import USER_AGENT
 # --- FastMCP Instance ---
 mcp = FastMCP("datatagger")
 
-# Diagnose FastMCP
-print(f"DEBUG: FastMCP instance methods: {[m for m in dir(mcp) if not m.startswith('_')]}")
+# --- Session & Global Config ---
+SESSION_TIMEOUT = 1800  # 30 minutes
+session_key_var: ContextVar[Optional[str]] = ContextVar("session_key", default=None)
 session_base_url_var: ContextVar[Optional[str]] = ContextVar("session_base_url", default=None)
 
 # In-memory store: {token: {"key": key, "base_url": url, "last_active": timestamp}}
 token_store: Dict[str, Dict[str, Any]] = {}
-
-# Legacy store for stdio sessions (optional fallback)
 SESSION_AUTH: Dict[str, Dict[str, str]] = {}
 
 
@@ -52,27 +51,8 @@ def cleanup_expired_sessions():
         del token_store[t]
 
 
-class TokenMiddleware:
-    """Middleware to extract token from URL and set the session context."""
-
-    def __init__(self, app: ASGIApp):
-        self.app = app
-
-    async def __call__(self, scope: Scope, receive: Receive, send: Send):
-        if scope["type"] == "http":
-            request = Request(scope)
-            token = request.query_params.get("token")
-
-            if token and token in token_store:
-                token_store[token]["last_active"] = time.time()
-                session_key_var.set(token_store[token]["key"])
-                session_base_url_var.set(token_store[token]["base_url"])
-
-        await self.app(scope, receive, send)
-
-
 # --- Registration & Token UI ---
-async def register_page(request: Request):
+async def register_page_handler(request: Request):
     """Simple registration page to exchange API key for a session token."""
     if request.method == "POST":
         form = await request.form()
@@ -90,15 +70,16 @@ async def register_page(request: Request):
         }
 
         # Detect protocol behind reverse proxy
-        forwarded_proto = request.headers.get("x-forwarded-proto", "http")
+        forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
-        personal_url = f"{forwarded_proto}://{host}/sse?token={new_token}"
+        # In hosted mode, we use the /mcp endpoint for the streamable transport
+        personal_url = f"{forwarded_proto}://{host}/mcp?token={new_token}"
 
         return HTMLResponse(
             f"""
             <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 40px auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
                 <h2 style="color: #2c3e50;">Registration Successful</h2>
-                <p>Use the following URL in your MCP client (e.g. KISSKI):</p>
+                <p>Use the following URL in your MCP client (e.g. KISSKI or Claude):</p>
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; word-break: break-all; font-family: monospace; border: 1px solid #eee; margin: 10px 0;">
                     {personal_url}
                 </div>
@@ -131,8 +112,7 @@ async def register_page(request: Request):
     )
 
 
-# --- Standalone Starlette App & Explicit Routing ---
-
+# --- Background Tasks ---
 async def session_cleanup_loop():
     """Background task to remove expired sessions."""
     while True:
@@ -147,14 +127,9 @@ async def session_cleanup_loop():
 
 app = FastAPI()
 
-# Registration page
-@app.api_route("/register", methods=["GET", "POST"])
-async def register_page_route(request: Request):
-    return await register_page(request)
-
 # Token Middleware for FastAPI
 class TokenAuthMiddleware(BaseHTTPMiddleware):
-    async def dispatch(self, request, call_next):
+    async def dispatch(self, request: Request, call_next):
         token = request.query_params.get("token")
         if token and token in token_store:
             token_store[token]["last_active"] = time.time()
@@ -164,8 +139,12 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 
 app.add_middleware(TokenAuthMiddleware)
 
+# Static Routes
+@app.api_route("/register", methods=["GET", "POST"])
+async def register_route(request: Request):
+    return await register_page_handler(request)
+
 # Mounting the MCP server logic
-# Use the native streamable_http_app from FastMCP
 try:
     if hasattr(mcp, "streamable_http_app"):
         mcp_app = mcp.streamable_http_app()
@@ -175,12 +154,9 @@ try:
         mcp_app = mcp.sse_app()
         app.mount("/mcp", mcp_app)
         print("DEBUG: Mounted MCP via sse_app on /mcp")
-    else:
-        print("ERROR: No native MCP app method found (tried streamable_http_app, sse_app)")
 except Exception as e:
     print(f"ERROR during app mounting: {e}")
 
-# Cleanup task logic
 @app.on_event("startup")
 async def startup_event():
     asyncio.create_task(session_cleanup_loop())
@@ -192,9 +168,6 @@ async def startup_event():
 def get_auth_config(ctx: Optional[Context] = None) -> Tuple[str, str]:
     """
     Unified authentication resolver.
-    1. Check Token-Store (ContextVar) - Hosted Mode (SSE)
-    2. Check Session-Store (FastMCP Context) - Manual stdio configuration
-    3. Check Environment Variables - Local Mode (os.environ)
     """
     # 1. Hosted Mode (via Middleware/ContextVar)
     token = session_key_var.get()
@@ -352,9 +325,6 @@ async def upload_fdm_file(
                 return response.text
     except Exception as e:
         return f"Error uploading file: {e}"
-
-
-# --- SECTION: SEARCH ---
 
 
 # --- SECTION: SEARCH ---
@@ -708,7 +678,6 @@ async def add_metadata_to_dataset(
     ctx: Optional[Context] = None,
 ) -> str:
     """Add a batch of metadata item tags (via json) to an existing dataset."""
-    # Simulates fdm_uploads_dataset_version_create_with_metadata logic
     payload = {"metadata": metadata_items}
     return format_json_response(
         await make_fdm_request(
