@@ -27,10 +27,10 @@ def main():
     args = parser.parse_args()
 
     if args.transport == "sse":
-        import uvicorn
-
-        # FastMCP provides a Starlette app at mcp.app
-        uvicorn.run(mcp.app, host=args.host, port=args.port)
+        # Force uvicorn to bind to the correct host and port via env vars
+        os.environ["UVICORN_HOST"] = args.host
+        os.environ["UVICORN_PORT"] = str(args.port)
+        mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")
 
