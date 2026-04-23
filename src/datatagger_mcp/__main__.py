@@ -11,41 +11,21 @@ def main():
         "--transport",
         choices=["stdio", "sse"],
         default=os.environ.get("MCP_TRANSPORT", "stdio"),
-        help="Transport mode: 'stdio' for local use, 'sse' for network/Docker (default: stdio or MCP_TRANSPORT env)",
+        help="Transport mode: 'stdio' for local use, 'sse' for network/Docker",
     )
-    parser.add_argument(
-        "--host",
-        default=os.environ.get("MCP_HOST", "0.0.0.0"),
-        help="Host to bind to in SSE mode (default: 0.0.0.0 or MCP_HOST env)",
-    )
-    parser.add_argument(
-        "--port",
-        type=int,
-        default=int(os.environ.get("MCP_PORT", "8000")),
-        help="Port to listen on in SSE mode (default: 8000 or MCP_PORT env)",
-    )
+    # Note: Host/Port are handled by the mcp CLI or environment variables
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+    
     args = parser.parse_args()
 
     if args.transport == "sse":
-        import uvicorn
-        
-        # Get the starlette app directly from the instance.
-        # We try different ways to find it depending on the version.
-        app = getattr(mcp_server, "_app", None)
-        if app is None:
-            try:
-                app = mcp_server.get_starlette_app()
-            except AttributeError:
-                # Last resort: try to trigger the internal creation
-                # by calling a dummy sse related method if it exists
-                # or just use the internal server to build it.
-                from mcp.server.fastmcp import FastMCP
-                # This is a bit of a hack to get the app
-                mcp_server.run(transport="stdio") # This won't work in a script
-                raise RuntimeError("Could not find Starlette app in FastMCP instance. Please check your mcp library version.")
-
-        print(f"Starting SSE server on {args.host}:{args.port}")
-        uvicorn.run(app, host=args.host, port=args.port)
+        # In newer mcp versions, run() supports host/port. 
+        # If not, we rely on environment variables.
+        try:
+            mcp_server.run(transport="sse", host=args.host, port=args.port)
+        except TypeError:
+            mcp_server.run(transport="sse")
     else:
         mcp_server.run(transport="stdio")
 
