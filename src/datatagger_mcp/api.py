@@ -165,6 +165,16 @@ async def handle_messages(request: Request):
 
 from contextlib import asynccontextmanager
 
+async def session_cleanup_loop():
+    """Background task to remove expired sessions."""
+    while True:
+        try:
+            cleanup_expired_sessions()
+        except Exception:
+            pass
+        await asyncio.sleep(300)
+
+
 @asynccontextmanager
 async def lifespan(app: Starlette):
     """Modern Starlette lifespan to manage the background cleanup task."""
