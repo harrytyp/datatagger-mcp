@@ -145,15 +145,20 @@ async def register_route(request: Request):
     return await register_page_handler(request)
 
 # Mounting the MCP server logic
+# Mounting the MCP server logic
 try:
-    if hasattr(mcp, "streamable_http_app"):
-        mcp_app = mcp.streamable_http_app()
-        app.mount("/mcp", mcp_app)
-        print("DEBUG: Mounted MCP via streamable_http_app on /mcp")
-    elif hasattr(mcp, "sse_app"):
+    if hasattr(mcp, "sse_app"):
         mcp_app = mcp.sse_app()
         app.mount("/mcp", mcp_app)
         print("DEBUG: Mounted MCP via sse_app on /mcp")
+        try:
+            print(f"DEBUG: MCP App Routes: {[r.path for r in mcp_app.routes]}")
+        except Exception:
+            pass
+    elif hasattr(mcp, "streamable_http_app"):
+        mcp_app = mcp.streamable_http_app()
+        app.mount("/mcp", mcp_app)
+        print("DEBUG: Mounted MCP via streamable_http_app on /mcp")
 except Exception as e:
     print(f"ERROR during app mounting: {e}")
 
