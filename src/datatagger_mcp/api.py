@@ -1,3 +1,4 @@
+import mimetypes
 import os
 import json
 import uuid
@@ -7,35 +8,18 @@ from typing import Any, Dict, List, Optional, Tuple
 from contextvars import ContextVar
 
 import httpx
-from starlette.applications import Starlette
-from starlette.responses import HTMLResponse, JSONResponse
+from starlette.responses import HTMLResponse
 from starlette.requests import Request
-from starlette.routing import Route, Mount
+from starlette.applications import Starlette
+from starlette.routing import Route
 from starlette.middleware import Middleware
-from starlette.types import ASGIApp, Scope, Receive, Send
-from mcp.server.sse import SseServerTransport
 
 from mcp.server.fastmcp import FastMCP, Context
 
-# --- FastMCP & SSE Transport ---
+from . import USER_AGENT
+
+# --- FastMCP Instance ---
 mcp = FastMCP("datatagger")
-sse = SseServerTransport("/messages")
-
-# --- Session & Mode Configuration ---
-MCP_MODE = os.environ.get("MCP_MODE", "local")
-SESSION_TIMEOUT = 1800  # 30 minutes
-session_key_var: ContextVar[Optional[str]] = ContextVar("session_key", default=None)
-session_base_url_var: ContextVar[Optional[str]] = ContextVar("session_base_url", default=None)
-
-# In-memory store: {token: {"key": key, "base_url": url, "last_active": timestamp}}
-token_store: Dict[str, Dict[str, Any]] = {}
-SESSION_AUTH: Dict[str, Dict[str, str]] = {}
-
-# --- Session & Mode Configuration ---
-# MCP_MODE: "local" (stdio/env) or "hosted" (sse/token)
-MCP_MODE = os.environ.get("MCP_MODE", "local")
-SESSION_TIMEOUT = 1800  # 30 minutes
-session_key_var: ContextVar[Optional[str]] = ContextVar("session_key", default=None)
 session_base_url_var: ContextVar[Optional[str]] = ContextVar("session_base_url", default=None)
 
 # In-memory store: {token: {"key": key, "base_url": url, "last_active": timestamp}}
@@ -146,38 +130,19 @@ async def register_page(request: Request):
 
 # --- Standalone Starlette App & Explicit Routing ---
 
-async def health_check(request: Request):
-    print("DEBUG: Root health check called")
-    return HTMLResponse("Datatagger MCP is running. Go to <a href='/register'>/register</a> to onboard.")
+# --- Final App Construction ---
 
-async def handle_sse(request: Request):
-    """Handle the SSE connection and bridge it to FastMCP."""
-    print(f"DEBUG: Incoming SSE connection from {request.client.host}")
-    async with sse.connect_sse(
-        request.scope, request.receive, request._send
-    ) as (read_stream, write_stream):
-        print("DEBUG: SSE connection established, starting MCP server logic")
-        try:
-            await mcp.server.run(
-                read_stream,
-                write_stream,
-                mcp.server.create_initialization_options(),
-            )
-        except Exception as e:
-            print(f"DEBUG: Error in MCP server logic: {e}")
-        print("DEBUG: SSE connection closed")
+# The native FastMCP Starlette app
+app = mcp.get_starlette_app()
 
+# We add our custom routes to the Starlette app
+app.add_route("/register", register_page, methods=["GET", "POST"])
 
-async def handle_messages(request: Request):
-    """Handle POST messages from the SSE client."""
-    print(f"DEBUG: Incoming message POST from {request.client.host}")
-    await sse.handle_post_message(request.scope, request.receive, request._send)
+# Apply Token Middleware
+app.add_middleware(TokenMiddleware)
 
-
-from contextlib import asynccontextmanager
-
+# Cleanup task logic
 async def session_cleanup_loop():
-    """Background task to remove expired sessions."""
     while True:
         try:
             cleanup_expired_sessions()
@@ -185,33 +150,9 @@ async def session_cleanup_loop():
             pass
         await asyncio.sleep(300)
 
-
-@asynccontextmanager
-async def lifespan(app: Starlette):
-    """Modern Starlette lifespan to manage the background cleanup task."""
-    cleanup_task = asyncio.create_task(session_cleanup_loop())
-    yield
-    cleanup_task.cancel()
-    try:
-        await cleanup_task
-    except asyncio.CancelledError:
-        pass
-
-
-# Define the Route list explicitly
-routes = [
-    Route("/", health_check),
-    Route("/register", register_page, methods=["GET", "POST"]),
-    Route("/sse", handle_sse),
-    Route("/messages", handle_messages, methods=["POST"]),
-]
-
-# Create the app with the routes, middleware and lifespan
-app = Starlette(
-    routes=routes,
-    middleware=[Middleware(TokenMiddleware)],
-    lifespan=lifespan
-)
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(session_cleanup_loop())
 
 
 # --- Authentication & Core Helpers ---
