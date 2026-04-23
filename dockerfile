@@ -4,12 +4,12 @@ WORKDIR /app
 
 COPY . .
 
-# Install dependencies and force update mcp to ensure host/port support
-RUN pip install . && pip install --upgrade mcp
+# Install the package and mcp-proxy
+RUN pip install . && pip install mcp-proxy
 
-# Expose port 8000 for SSE transport
+# Expose port 8000 for the proxy
 EXPOSE 8000
 
-# Start MCP Server in SSE mode by default in Docker using the official CLI
-# Using run-sse which is the dedicated command for SSE transport
-CMD ["mcp", "run-sse", "src/datatagger_mcp/api.py", "--host", "0.0.0.0", "--port", "8000"]
+# Start mcp-proxy to expose the local stdio server as SSE
+# --sse-host 0.0.0.0 is now handled correctly by the proxy
+CMD ["mcp-proxy", "--sse-host", "0.0.0.0", "--sse-port", "8000", "--", "datatagger-mcp", "--transport", "stdio"]
