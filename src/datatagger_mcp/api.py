@@ -133,6 +133,16 @@ async def register_page(request: Request):
 
 # --- Standalone Starlette App & Explicit Routing ---
 
+async def session_cleanup_loop():
+    """Background task to remove expired sessions."""
+    while True:
+        try:
+            cleanup_expired_sessions()
+        except Exception:
+            pass
+        await asyncio.sleep(300)
+
+
 # --- Final App Construction (FastAPI) ---
 
 app = FastAPI()
@@ -155,16 +165,18 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
 app.add_middleware(TokenAuthMiddleware)
 
 # Mounting the MCP server logic
-# If get_starlette_app exists, we use it as a sub-app
+# Use the native streamable_http_app from FastMCP
 try:
-    if hasattr(mcp, "get_starlette_app"):
-        mcp_app = mcp.get_starlette_app()
+    if hasattr(mcp, "streamable_http_app"):
+        mcp_app = mcp.streamable_http_app()
         app.mount("/mcp", mcp_app)
-        print("DEBUG: Mounted MCP via get_starlette_app on /mcp")
+        print("DEBUG: Mounted MCP via streamable_http_app on /mcp")
+    elif hasattr(mcp, "sse_app"):
+        mcp_app = mcp.sse_app()
+        app.mount("/mcp", mcp_app)
+        print("DEBUG: Mounted MCP via sse_app on /mcp")
     else:
-        # Fallback to SSE if native app is missing
-        print("DEBUG: get_starlette_app missing, using internal server logic")
-        # Note: We will implement a manual fallback if needed based on logs
+        print("ERROR: No native MCP app method found (tried streamable_http_app, sse_app)")
 except Exception as e:
     print(f"ERROR during app mounting: {e}")
 
