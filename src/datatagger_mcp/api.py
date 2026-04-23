@@ -148,13 +148,19 @@ async def register_route(request: Request):
 try:
     if hasattr(mcp, "streamable_http_app"):
         mcp_app = mcp.streamable_http_app()
-        # Using a trailing slash for better routing compatibility
-        app.mount("/mcp/", mcp_app)
-        print("DEBUG: Mounted MCP via streamable_http_app on /mcp/")
+        
+        # Diagnostic route to see what's happening
+        @app.get("/mcp/{path:path}")
+        async def mcp_diag(path: str, request: Request):
+            print(f"DEBUG: MCP request received for path: {path}")
+            return HTMLResponse(f"DEBUG: You requested /mcp/{path}. Check logs for routing details.", status_code=200)
+
+        app.mount("/mcp", mcp_app)
+        print("DEBUG: Mounted MCP via streamable_http_app on /mcp")
     elif hasattr(mcp, "sse_app"):
         mcp_app = mcp.sse_app()
-        app.mount("/mcp/", mcp_app)
-        print("DEBUG: Mounted MCP via sse_app on /mcp/")
+        app.mount("/mcp", mcp_app)
+        print("DEBUG: Mounted MCP via sse_app on /mcp")
 except Exception as e:
     print(f"ERROR during app mounting: {e}")
 
