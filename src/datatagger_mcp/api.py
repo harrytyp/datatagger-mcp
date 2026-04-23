@@ -12,6 +12,7 @@ from fastapi import FastAPI
 from starlette.responses import HTMLResponse
 from starlette.requests import Request
 from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Scope, Receive, Send
 
 from mcp.server.fastmcp import FastMCP, Context
 
