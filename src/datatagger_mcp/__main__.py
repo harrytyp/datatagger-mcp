@@ -2,7 +2,7 @@ import argparse
 import os
 import sys
 
-from .api import mcp as mcp_server
+from .api import mcp as mcp_server, app as web_app
 
 
 def main():
@@ -17,13 +17,12 @@ def main():
 
     if mode == "hosted":
         import uvicorn
-        # The starlette app is available at mcp_server.external_app
-        # We start it directly to handle our custom middleware and routes
+        # We start our custom Starlette app which mounts everything correctly
         print(f"Starting Datatagger MCP in HOSTED mode on {host}:{port}")
         print(f"Registration page available at http://{host}:{port}/register")
-        uvicorn.run(mcp_server.external_app, host=host, port=port)
+        uvicorn.run(web_app, host=host, port=port)
     else:
-        # Local mode uses standard stdio transport
+        # Local mode uses standard stdio transport of the FastMCP instance
         print("Starting Datatagger MCP in LOCAL mode (stdio)", file=sys.stderr)
         mcp_server.run(transport="stdio")
 

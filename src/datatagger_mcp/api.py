@@ -1,4 +1,3 @@
-import mimetypes
 import os
 import json
 import uuid
@@ -8,13 +7,29 @@ from typing import Any, Dict, List, Optional, Tuple
 from contextvars import ContextVar
 
 import httpx
-from starlette.responses import HTMLResponse
+from starlette.applications import Starlette
+from starlette.responses import HTMLResponse, JSONResponse
 from starlette.requests import Request
+from starlette.routing import Route, Mount
 from starlette.types import ASGIApp, Scope, Receive, Send
+from mcp.server.sse import SseServerTransport
 
-from mcp.server.fastmcp import Context
+from mcp.server.fastmcp import FastMCP, Context
 
-from . import USER_AGENT, mcp
+from . import USER_AGENT
+
+# --- FastMCP Instance ---
+mcp = FastMCP("datatagger")
+
+# --- Session & Mode Configuration ---
+MCP_MODE = os.environ.get("MCP_MODE", "local")
+SESSION_TIMEOUT = 1800  # 30 minutes
+session_key_var: ContextVar[Optional[str]] = ContextVar("session_key", default=None)
+session_base_url_var: ContextVar[Optional[str]] = ContextVar("session_base_url", default=None)
+
+# In-memory store: {token: {"key": key, "base_url": url, "last_active": timestamp}}
+token_store: Dict[str, Dict[str, Any]] = {}
+SESSION_AUTH: Dict[str, Dict[str, str]] = {}
 
 # --- Session & Mode Configuration ---
 # MCP_MODE: "local" (stdio/env) or "hosted" (sse/token)
@@ -69,8 +84,7 @@ class TokenMiddleware:
         await self.app(scope, receive, send)
 
 
-# --- Registration UI & Endpoints ---
-@mcp.external_app.route("/register", methods=["GET", "POST"])
+# --- Registration & Token UI ---
 async def register_page(request: Request):
     """Simple registration page to exchange API key for a session token."""
     if request.method == "POST":
@@ -130,21 +144,40 @@ async def register_page(request: Request):
     )
 
 
-# Apply Middleware
-mcp.external_app.add_middleware(TokenMiddleware)
+# --- Standalone Starlette App & Manual SSE Mounting ---
+app = Starlette()
+sse = SseServerTransport("/messages")
 
 
-# Cleanup task (runs every 5 minutes)
-async def session_cleanup_loop():
-    while True:
-        try:
-            cleanup_expired_sessions()
-        except Exception:
-            pass
-        await asyncio.sleep(300)
+@app.route("/sse")
+async def handle_sse(request: Request):
+    """Handle the SSE connection and bridge it to FastMCP."""
+    async with sse.connect_sse(
+        request.scope, request.receive, request._send
+    ) as (read_stream, write_stream):
+        # We access the internal server from FastMCP
+        # This is the standard way to run the server logic on a stream
+        await mcp.server.run(
+            read_stream,
+            write_stream,
+            mcp.server.create_initialization_options(),
+        )
 
 
-@mcp.external_app.on_event("startup")
+@app.route("/messages", methods=["POST"])
+async def handle_messages(request: Request):
+    """Handle POST messages from the SSE client."""
+    await sse.handle_post_message(request.scope, request.receive, request._send)
+
+
+# Mount the /register endpoint
+app.add_route("/register", register_page, methods=["GET", "POST"])
+
+# Apply Token Middleware to the standalone app
+app.add_middleware(TokenMiddleware)
+
+
+@app.on_event("startup")
 async def startup_event():
     asyncio.create_task(session_cleanup_loop())
 
