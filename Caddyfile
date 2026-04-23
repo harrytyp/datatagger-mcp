@@ -1,0 +1,3 @@
+datatagger-mcp.duckdns.org {
+    reverse_proxy mcp-datatagger:8000
+}

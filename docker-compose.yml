@@ -5,11 +5,28 @@ services:
     build:
       context: .
     restart: unless-stopped
-    ports:
-      - "8000:8000"
+    expose:
+      - "8000"
     environment:
       - FDM_BASE_URL=https://datatagger.ub.tum.de
-      - FDM_TOKEN=YOUR_PERSONAL_TOKEN_HERE
-      - MCP_TRANSPORT=sse
+      - FDM_TOKEN=DEIN_TOKEN_HIER
+      - MCP_MODE=hosted
       - MCP_PORT=8000
       - MCP_HOST=0.0.0.0
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - mcp-datatagger
+
+volumes:
+  caddy_data:
+  caddy_config:
