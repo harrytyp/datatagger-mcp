@@ -148,18 +148,25 @@ async def register_page(request: Request):
 
 async def handle_sse(request: Request):
     """Handle the SSE connection and bridge it to FastMCP."""
+    print(f"DEBUG: Incoming SSE connection from {request.client.host}")
     async with sse.connect_sse(
         request.scope, request.receive, request._send
     ) as (read_stream, write_stream):
-        await mcp.server.run(
-            read_stream,
-            write_stream,
-            mcp.server.create_initialization_options(),
-        )
+        print("DEBUG: SSE connection established, starting MCP server logic")
+        try:
+            await mcp.server.run(
+                read_stream,
+                write_stream,
+                mcp.server.create_initialization_options(),
+            )
+        except Exception as e:
+            print(f"DEBUG: Error in MCP server logic: {e}")
+        print("DEBUG: SSE connection closed")
 
 
 async def handle_messages(request: Request):
     """Handle POST messages from the SSE client."""
+    print(f"DEBUG: Incoming message POST from {request.client.host}")
     await sse.handle_post_message(request.scope, request.receive, request._send)
 
 
