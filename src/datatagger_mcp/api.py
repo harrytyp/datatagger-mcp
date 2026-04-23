@@ -102,10 +102,10 @@ async def register_page(request: Request):
             "last_active": time.time(),
         }
 
-        # Build the SSE URL
+        # Detect protocol behind reverse proxy
+        forwarded_proto = request.headers.get("x-forwarded-proto", "http")
         host = request.headers.get("host", "localhost:8000")
-        protocol = "https" if request.scope.get("scheme") == "https" else "http"
-        personal_url = f"{protocol}://{host}/sse?token={new_token}"
+        personal_url = f"{forwarded_proto}://{host}/sse?token={new_token}"
 
         return HTMLResponse(
             f"""
