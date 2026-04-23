@@ -72,8 +72,8 @@ async def register_page_handler(request: Request):
         # Detect protocol behind reverse proxy
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
-        # In hosted mode, we use the /mcp/sse endpoint
-        personal_url = f"{forwarded_proto}://{host}/mcp/sse?token={new_token}"
+        # In hosted mode, we use the /mcp/ endpoint with a trailing slash
+        personal_url = f"{forwarded_proto}://{host}/mcp/?token={new_token}"
 
         return HTMLResponse(
             f"""
@@ -145,20 +145,16 @@ async def register_route(request: Request):
     return await register_page_handler(request)
 
 # Mounting the MCP server logic
-# Mounting the MCP server logic
 try:
-    if hasattr(mcp, "sse_app"):
-        mcp_app = mcp.sse_app()
-        app.mount("/mcp", mcp_app)
-        print("DEBUG: Mounted MCP via sse_app on /mcp")
-        try:
-            print(f"DEBUG: MCP App Routes: {[r.path for r in mcp_app.routes]}")
-        except Exception:
-            pass
-    elif hasattr(mcp, "streamable_http_app"):
+    if hasattr(mcp, "streamable_http_app"):
         mcp_app = mcp.streamable_http_app()
-        app.mount("/mcp", mcp_app)
-        print("DEBUG: Mounted MCP via streamable_http_app on /mcp")
+        # Using a trailing slash for better routing compatibility
+        app.mount("/mcp/", mcp_app)
+        print("DEBUG: Mounted MCP via streamable_http_app on /mcp/")
+    elif hasattr(mcp, "sse_app"):
+        mcp_app = mcp.sse_app()
+        app.mount("/mcp/", mcp_app)
+        print("DEBUG: Mounted MCP via sse_app on /mcp/")
 except Exception as e:
     print(f"ERROR during app mounting: {e}")
 
