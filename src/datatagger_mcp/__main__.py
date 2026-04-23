@@ -28,9 +28,16 @@ def main():
 
     if args.transport == "sse":
         import uvicorn
-        # Try to get the starlette app from FastMCP
-        app = mcp.get_starlette_app()
-        uvicorn.run(app, host=args.host, port=args.port)
+        original_run = uvicorn.run
+
+        def patched_run(app, **kwargs):
+            # Force our desired host and port
+            kwargs["host"] = args.host
+            kwargs["port"] = args.port
+            return original_run(app, **kwargs)
+
+        uvicorn.run = patched_run
+        mcp.run(transport="sse")
     else:
         mcp.run(transport="stdio")
 
