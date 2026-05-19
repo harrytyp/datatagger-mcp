@@ -85,7 +85,11 @@ async def register_page_handler(request: Request):
         # Detect protocol behind reverse proxy
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
-        personal_url = f"{forwarded_proto}://{host}/mcp/?token={new_token}"
+        url_prefix = os.environ.get("URL_PREFIX", "")
+        if url_prefix:
+            personal_url = f"{forwarded_proto}://{host}{url_prefix}/mcp/?token={new_token}"
+        else:
+            personal_url = f"{forwarded_proto}://{host}/mcp/?token={new_token}"
 
         return HTMLResponse(
             f"""
