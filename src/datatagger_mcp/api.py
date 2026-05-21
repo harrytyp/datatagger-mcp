@@ -28,6 +28,7 @@ mcp = FastMCP(
     transport_security=TransportSecuritySettings(
         allowed_hosts=[
             "datatagger-mcp.duckdns.org",
+            "researchmcp.duckdns.org",
             "localhost",
             "127.0.0.1",
         ]
@@ -86,10 +87,12 @@ async def register_page_handler(request: Request):
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
         host = request.headers.get("host", "localhost:8000")
         url_prefix = os.environ.get("URL_PREFIX", "")
-        if url_prefix:
-            personal_url = f"{forwarded_proto}://{host}{url_prefix}/mcp/?token={new_token}"
-        else:
-            personal_url = f"{forwarded_proto}://{host}/mcp/?token={new_token}"
+        if not url_prefix or not url_prefix.strip():
+            url_prefix = "/dt"
+        elif not url_prefix.startswith("/"):
+            url_prefix = "/" + url_prefix
+        url_prefix = url_prefix.rstrip("/")
+        personal_url = f"{forwarded_proto}://{host}{url_prefix}/mcp/?token={new_token}"
 
         return HTMLResponse(
             f"""
@@ -166,6 +169,28 @@ class TokenAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 app.add_middleware(TokenAuthMiddleware)
+
+
+class URLPrefixFixMiddleware(BaseHTTPMiddleware):
+    """Fix 307 redirect Location headers from the MCP StreamableHTTP session
+    manager so they include the URL_PREFIX (e.g. /dt) when running behind a
+    reverse proxy that strips the prefix before forwarding."""
+
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        if response.status_code == 307:
+            location = response.headers.get("location", "")
+            url_prefix = os.environ.get("URL_PREFIX", "").strip()
+            if url_prefix and location:
+                from urllib.parse import urlparse
+                parsed = urlparse(location)
+                if not parsed.path.startswith(url_prefix):
+                    new_path = url_prefix.rstrip("/") + "/" + parsed.path.lstrip("/")
+                    response.headers["location"] = parsed._replace(path=new_path).geturl()
+        return response
+
+
+app.add_middleware(URLPrefixFixMiddleware)
 
 # Registration Route
 @app.api_route("/register", methods=["GET", "POST"])
