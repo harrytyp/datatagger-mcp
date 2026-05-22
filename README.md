@@ -1,3 +1,16 @@
+## Auth: Self-contained JWT Tokens
+
+This server uses HMAC-SHA256 self-contained JWTs instead of server-side session storage.
+When you register via the web page:
+
+1. Your API token + base URL are embedded into a signed JWT
+2. The token is returned as your MCP URL
+3. **No credentials are stored on the server**
+4. Tokens are valid for **30 days** and survive container restarts
+5. Set `MCP_JWT_SECRET` in your `.env` file (a random signing key)
+
+---
+
 # DataTagger MCP Server
 
 A comprehensive Model Context Protocol (MCP) server for interacting with the TUM
