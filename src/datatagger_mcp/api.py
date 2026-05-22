@@ -88,7 +88,7 @@ async def register_page_handler(request: Request):
                 <h2 style="color: #2c3e50;">Registration Successful</h2>
                 <p>Use the following URL in your MCP client (any MCP agent):</p>
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; word-break: break-all; font-family: monospace; border: 1px solid #eee; margin: 10px 0;">
-                    {personal_url}
+{personal_url}
                 </div>
                 <p style="color: #666; font-size: 0.9em; margin-top: 20px;">
                     Token expires in 30 days — re-visit this page to generate a new one.<br>
