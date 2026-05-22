@@ -1,7 +1,6 @@
 import mimetypes
 import os
 import json
-import uuid
 import time
 import asyncio
 from typing import Any, Dict, List, Optional, Tuple
@@ -19,9 +18,9 @@ from mcp.server.fastmcp import FastMCP, Context
 from mcp.server.transport_security import TransportSecuritySettings
 
 from . import USER_AGENT
+from .jwt_token import encode_token, decode_token
 
 # --- FastMCP Instance ---
-# Use stateless_http=True and transport_security to bypass host validation issues
 mcp = FastMCP(
     "datatagger",
     stateless_http=True,
@@ -36,12 +35,8 @@ mcp = FastMCP(
 )
 
 # --- Session & Global Config ---
-SESSION_TIMEOUT = 1800  # 30 minutes
 session_key_var: ContextVar[Optional[str]] = ContextVar("session_key", default=None)
 session_base_url_var: ContextVar[Optional[str]] = ContextVar("session_base_url", default=None)
-
-# In-memory store: {token: {"key": key, "base_url": url, "last_active": timestamp}}
-token_store: Dict[str, Dict[str, Any]] = {}
 SESSION_AUTH: Dict[str, Dict[str, str]] = {}
 
 
@@ -55,19 +50,14 @@ def get_session_id(ctx: Optional[Context]) -> Optional[str]:
         return None
 
 
-def cleanup_expired_sessions():
-    """Remove sessions that have been inactive for too long."""
-    now = time.time()
-    expired = [
-        t for t, data in token_store.items() if now - data["last_active"] > SESSION_TIMEOUT
-    ]
-    for t in expired:
-        del token_store[t]
+# --- Background Tasks ---
+async def session_cleanup_loop():
+    """Legacy background task — kept for interface compatibility, no-op now."""
+    while True:
+        await asyncio.sleep(3600)
 
-
-# --- Registration & Token UI ---
 async def register_page_handler(request: Request):
-    """Simple registration page to exchange API key for a session token."""
+    """Registration page — issues self-contained JWT tokens (no server storage)."""
     if request.method == "POST":
         form = await request.form()
         api_key = str(form.get("api_key", "")).strip()
@@ -76,12 +66,10 @@ async def register_page_handler(request: Request):
         if not api_key:
             return HTMLResponse("ERROR: API Key is required", status_code=400)
 
-        new_token = str(uuid.uuid4())
-        token_store[new_token] = {
-            "key": api_key,
-            "base_url": base_url,
-            "last_active": time.time(),
-        }
+        try:
+            token = encode_token(base_url, api_key)
+        except RuntimeError as e:
+            return HTMLResponse(f"Server misconfiguration: {e}", status_code=500)
 
         # Detect protocol behind reverse proxy
         forwarded_proto = request.headers.get("x-forwarded-proto", "https")
@@ -92,18 +80,19 @@ async def register_page_handler(request: Request):
         elif not url_prefix.startswith("/"):
             url_prefix = "/" + url_prefix
         url_prefix = url_prefix.rstrip("/")
-        personal_url = f"{forwarded_proto}://{host}{url_prefix}/mcp/?token={new_token}"
+        personal_url = f"{forwarded_proto}://{host}{url_prefix}/mcp/?token={token}"
 
         return HTMLResponse(
             f"""
             <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 40px auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
                 <h2 style="color: #2c3e50;">Registration Successful</h2>
-                <p>Use the following URL in your MCP client (e.g. KISSKI or Claude):</p>
+                <p>Use the following URL in your MCP client (any MCP agent):</p>
                 <div style="background: #f8f9fa; padding: 15px; border-radius: 4px; word-break: break-all; font-family: monospace; border: 1px solid #eee; margin: 10px 0;">
                     {personal_url}
                 </div>
                 <p style="color: #666; font-size: 0.9em; margin-top: 20px;">
-                    Note: This session will expire after 30 minutes of inactivity.
+                    Token expires in 30 days — re-visit this page to generate a new one.<br>
+                    Survives server restarts — no re-registration needed.
                 </p>
                 <a href="/register" style="display: inline-block; margin-top: 10px; color: #3498db; text-decoration: none;">&larr; Register another key</a>
             </div>
@@ -114,7 +103,7 @@ async def register_page_handler(request: Request):
         """
         <div style="font-family: sans-serif; padding: 20px; max-width: 600px; margin: 40px auto; border: 1px solid #ddd; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1);">
             <h2 style="color: #2c3e50;">Data Tagger MCP Registration</h2>
-            <p style="color: #666;">Enter your API token to generate a personal session URL.</p>
+            <p style="color: #666;">Enter your API token to generate a personal MCP session URL.</p>
             <form method="post">
                 <div style="margin-bottom: 15px;">
                     <label style="display: block; margin-bottom: 5px; font-weight: bold;">API Token:</label>
@@ -158,14 +147,15 @@ async def lifespan(app: FastAPI):
 # Main app with combined lifespan
 app = FastAPI(lifespan=lifespan)
 
-# Token Middleware for FastAPI
+# Token Middleware for FastAPI — decodes self-contained JWT tokens
 class TokenAuthMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         token = request.query_params.get("token")
-        if token and token in token_store:
-            token_store[token]["last_active"] = time.time()
-            session_key_var.set(token_store[token]["key"])
-            session_base_url_var.set(token_store[token]["base_url"])
+        if token:
+            payload = decode_token(token)
+            if payload is not None:
+                session_key_var.set(payload["k"])
+                session_base_url_var.set(payload["u"])
         return await call_next(request)
 
 app.add_middleware(TokenAuthMiddleware)
